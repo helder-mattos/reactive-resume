@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { match } from "ts-pattern";
+import { useAIStore } from "@reactive-resume/ai/store";
 import { Alert, AlertDescription } from "@reactive-resume/ui/components/alert";
 import { Badge } from "@reactive-resume/ui/components/badge";
 import { Button } from "@reactive-resume/ui/components/button";
@@ -48,6 +49,7 @@ export function ResumeAnalysisSectionBuilder() {
 	const queryClient = useQueryClient();
 
 	const resume = useResume();
+	const observability = useAIStore((state) => state.observability);
 
 	const resumeId = resume?.id ?? "";
 	const { data: providers } = useQuery(orpc.aiProviders.list.queryOptions());
@@ -100,6 +102,7 @@ export function ResumeAnalysisSectionBuilder() {
 
 		analyzeResume({
 			resumeId: resume.id,
+			observability,
 		});
 	};
 

@@ -1,4 +1,4 @@
-import type { AIProvider } from "@reactive-resume/ai/types";
+import type { AIObservabilityProvider, AIProvider } from "@reactive-resume/ai/types";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import type { RouterOutput } from "@/libs/orpc/client";
 import { t } from "@lingui/core/macro";
@@ -16,6 +16,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useAIStore } from "@reactive-resume/ai/store";
 import { AI_PROVIDER_DEFAULT_BASE_URLS } from "@reactive-resume/ai/types";
 import { Badge } from "@reactive-resume/ui/components/badge";
 import { Button } from "@reactive-resume/ui/components/button";
@@ -159,6 +160,19 @@ function providerDefaults(provider: AIProvider) {
 		model: option?.defaultModel ?? "",
 	};
 }
+
+const observabilityProviderOptions: ComboboxOption<AIObservabilityProvider>[] = [
+	{
+		value: "laminar",
+		label: "Laminar",
+		keywords: ["laminar", "observability", "tracing"],
+	},
+	{
+		value: "langsmith",
+		label: "LangSmith",
+		keywords: ["langsmith", "langchain", "observability", "tracing"],
+	},
+];
 
 const emptyForm = {
 	label: "",
@@ -566,6 +580,197 @@ function CreateProviderForm() {
 	);
 }
 
+function AIObservabilityForm() {
+	const { set, observability } = useAIStore();
+	const laminar = observability.providers.laminar;
+	const langsmith = observability.providers.langsmith;
+
+	const handleProviderChange = (value: AIObservabilityProvider | null) => {
+		if (!value) return;
+
+		set((draft) => {
+			draft.observability.provider = value;
+		});
+	};
+
+	return (
+		<div className="grid gap-6 rounded-md border bg-card p-4">
+			<div className="flex items-center justify-between gap-4">
+				<div className="space-y-1">
+					<h3 className="font-semibold">
+						<Trans>AI Observability</Trans>
+					</h3>
+					<p className="text-muted-foreground text-sm leading-relaxed">
+						<Trans>
+							Send AI traces to your own observability provider to understand model calls and API credit usage.
+						</Trans>
+					</p>
+				</div>
+
+				<Switch
+					id="enable-ai-observability"
+					checked={observability.enabled}
+					onCheckedChange={(value) =>
+						set((draft) => {
+							draft.observability.enabled = value;
+						})
+					}
+				/>
+			</div>
+
+			<div className="grid gap-4 md:grid-cols-2">
+				<div className="space-y-2">
+					<Label htmlFor="ai-observability-provider">
+						<Trans>Provider</Trans>
+					</Label>
+					<Combobox
+						id="ai-observability-provider"
+						value={observability.provider}
+						disabled={!observability.enabled}
+						options={observabilityProviderOptions}
+						onValueChange={handleProviderChange}
+					/>
+				</div>
+
+				{observability.provider === "laminar" ? (
+					<>
+						<div className="space-y-2">
+							<Label htmlFor="ai-observability-laminar-project-api-key">
+								<Trans>Project API Key</Trans>
+							</Label>
+							<Input
+								id="ai-observability-laminar-project-api-key"
+								type="password"
+								value={laminar.projectApiKey}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.laminar.projectApiKey = event.target.value;
+									})
+								}
+								autoComplete="off"
+								data-lpignore="true"
+								data-bwignore="true"
+								data-1p-ignore="true"
+							/>
+						</div>
+
+						<div className="space-y-2 md:col-span-2">
+							<Label htmlFor="ai-observability-laminar-base-url">
+								<Trans>Base URL</Trans>
+							</Label>
+							<Input
+								id="ai-observability-laminar-base-url"
+								type="url"
+								value={laminar.baseUrl}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.laminar.baseUrl = event.target.value;
+									})
+								}
+								autoComplete="off"
+							/>
+						</div>
+
+						<div className="space-y-2">
+							<Label htmlFor="ai-observability-laminar-http-port">
+								<Trans>HTTP Port</Trans>
+							</Label>
+							<Input
+								id="ai-observability-laminar-http-port"
+								value={laminar.httpPort}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.laminar.httpPort = event.target.value;
+									})
+								}
+								autoComplete="off"
+							/>
+						</div>
+
+						<div className="space-y-2">
+							<Label htmlFor="ai-observability-laminar-grpc-port">
+								<Trans>gRPC Port</Trans>
+							</Label>
+							<Input
+								id="ai-observability-laminar-grpc-port"
+								value={laminar.grpcPort}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.laminar.grpcPort = event.target.value;
+									})
+								}
+								autoComplete="off"
+							/>
+						</div>
+					</>
+				) : (
+					<>
+						<div className="space-y-2">
+							<Label htmlFor="ai-observability-langsmith-api-key">
+								<Trans>API Key</Trans>
+							</Label>
+							<Input
+								id="ai-observability-langsmith-api-key"
+								type="password"
+								value={langsmith.apiKey}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.langsmith.apiKey = event.target.value;
+									})
+								}
+								autoComplete="off"
+								data-lpignore="true"
+								data-bwignore="true"
+								data-1p-ignore="true"
+							/>
+						</div>
+
+						<div className="space-y-2">
+							<Label htmlFor="ai-observability-langsmith-project-name">
+								<Trans>Project Name</Trans>
+							</Label>
+							<Input
+								id="ai-observability-langsmith-project-name"
+								value={langsmith.projectName}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.langsmith.projectName = event.target.value;
+									})
+								}
+								autoComplete="off"
+							/>
+						</div>
+
+						<div className="space-y-2 md:col-span-2">
+							<Label htmlFor="ai-observability-langsmith-endpoint">
+								<Trans>Endpoint</Trans>
+							</Label>
+							<Input
+								id="ai-observability-langsmith-endpoint"
+								type="url"
+								value={langsmith.endpoint}
+								disabled={!observability.enabled}
+								onChange={(event) =>
+									set((draft) => {
+										draft.observability.providers.langsmith.endpoint = event.target.value;
+									})
+								}
+								autoComplete="off"
+							/>
+						</div>
+					</>
+				)}
+			</div>
+		</div>
+	);
+}
+
 export function AISettingsSection() {
 	const { data: providers, isLoading, error } = useQuery(orpc.aiProviders.list.queryOptions());
 	const { hasUsableProvider } = useHasUsableAiProvider();
@@ -613,6 +818,8 @@ export function AISettingsSection() {
 			) : null}
 
 			{error ? null : <CreateProviderForm />}
+
+			<AIObservabilityForm />
 
 			<div className="grid gap-3">
 				{isLoading ? (

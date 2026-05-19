@@ -1,7 +1,9 @@
+import type { AIObservabilityInput } from "@reactive-resume/ai/observability";
 import type { AIProvider } from "@reactive-resume/ai/types";
 import type { ResumeAnalysis } from "@reactive-resume/schema/resume/analysis";
 import type { ResumeData } from "@reactive-resume/schema/resume/data";
 import type { ModelMessage, UIMessage } from "ai";
+import type { AIObservabilityTelemetry } from "../../observability/ai/types";
 import { inflateRawSync } from "node:zlib";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createCerebras } from "@ai-sdk/cerebras";
@@ -21,6 +23,7 @@ import { convertToModelMessages, createGateway, generateText, stepCountIs, strea
 import { createOllama } from "ollama-ai-provider-v2";
 import { match } from "ts-pattern";
 import { z } from "zod";
+import { aiObservabilitySchema, buildAIObservabilityMetadata } from "@reactive-resume/ai/observability";
 import {
 	analyzeResumeSystemPrompt as analyzeResumeSystemPromptTemplate,
 	chatSystemPromptTemplate,
@@ -39,6 +42,7 @@ import {
 import { aiProviderSchema } from "@reactive-resume/ai/types";
 import { applyResumePatches } from "@reactive-resume/resume/patch";
 import { resumeAnalysisSchema } from "@reactive-resume/schema/resume/analysis";
+import { withAIObservability } from "../../observability/ai";
 import { supportsProviderNativeWebSearch } from "./capabilities";
 import { resolveAiBaseUrl } from "./url-policy";
 
@@ -135,6 +139,7 @@ const aiCredentialsSchema = z.object({
 	model: z.string().trim().min(1),
 	apiKey: z.string().trim().min(1),
 	baseURL: z.string().optional().default(""),
+	observability: aiObservabilitySchema.optional(),
 });
 
 export const fileInputSchema = z.object({
@@ -147,17 +152,69 @@ type TestConnectionInput = z.infer<typeof aiCredentialsSchema>;
 export async function testConnection(input: TestConnectionInput): Promise<boolean> {
 	const RESPONSE_OK = "1";
 
-	const result = await generateText({
-		model: getModel(input),
-		maxOutputTokens: TEST_CONNECTION_MAX_OUTPUT_TOKENS,
-		temperature: 0,
-		messages: [{ role: "user", content: `Respond only with the single character: ${RESPONSE_OK}` }],
-	});
+	const result = await withAIObservability(
+		{
+			observability: input.observability,
+			modelProvider: input.provider,
+			operationName: "ai.testConnection",
+			metadata: buildAIObservabilityMetadata(input),
+		},
+		async (telemetry) =>
+			generateText(
+				withTelemetry(
+					{
+						model: getModel(input),
+						maxOutputTokens: TEST_CONNECTION_MAX_OUTPUT_TOKENS,
+						temperature: 0,
+						messages: [{ role: "user", content: `Respond only with the single character: ${RESPONSE_OK}` }],
+					},
+					telemetry,
+				),
+			),
+	);
 
 	if (result.text.trim() === RESPONSE_OK) return true;
 	if (result.finishReason === "length") throw new Error("The model returned too much text during the provider test.");
 
 	return false;
+}
+
+type WithObservabilityInput = {
+	provider: AIProvider;
+	model: string;
+	baseURL?: string;
+	observability?: AIObservabilityInput | undefined;
+};
+
+function withTelemetry<T extends object>(options: T, telemetry: AIObservabilityTelemetry | undefined) {
+	return telemetry ? { ...options, experimental_telemetry: telemetry } : options;
+}
+
+function buildOperationMetadata(input: WithObservabilityInput, extra: Record<string, unknown> = {}) {
+	return buildAIObservabilityMetadata(
+		{
+			provider: input.provider,
+			model: input.model,
+			baseURL: input.baseURL ?? "",
+			observability: input.observability,
+		},
+		extra,
+	);
+}
+
+async function withAIOperation<T>(
+	input: WithObservabilityInput & { operationName: string; metadata?: Record<string, unknown> },
+	execute: (telemetry: AIObservabilityTelemetry | undefined) => Promise<T>,
+): Promise<T> {
+	return withAIObservability(
+		{
+			observability: input.observability,
+			modelProvider: input.provider,
+			operationName: input.operationName,
+			metadata: buildOperationMetadata(input, input.metadata),
+		},
+		execute,
+	);
 }
 
 type ParsePdfInput = z.infer<typeof aiCredentialsSchema> & {
@@ -203,15 +260,28 @@ function buildResumeParsingTextMessages({ userPrompt, text }: { userPrompt: stri
 async function parsePdf(input: ParsePdfInput): Promise<ResumeData> {
 	const model = getModel(input);
 
-	const result = await generateText({
-		model,
-		system: buildResumeParsingSystemPrompt(pdfParserSystemPrompt),
-		messages: buildResumeParsingMessages({
-			userPrompt: pdfParserUserPrompt,
-			file: input.file,
-			mediaType: "application/pdf",
-		}),
-	}).catch((error: unknown) => logAndRethrow("Failed to generate the text with the model", error));
+	const result = await withAIOperation(
+		{
+			...input,
+			operationName: "ai.parsePdf",
+			metadata: { fileName: input.file.name, mediaType: "application/pdf" },
+		},
+		async (telemetry) =>
+			generateText(
+				withTelemetry(
+					{
+						model,
+						system: buildResumeParsingSystemPrompt(pdfParserSystemPrompt),
+						messages: buildResumeParsingMessages({
+							userPrompt: pdfParserUserPrompt,
+							file: input.file,
+							mediaType: "application/pdf",
+						}),
+					},
+					telemetry,
+				),
+			),
+	).catch((error: unknown) => logAndRethrow("Failed to generate the text with the model", error));
 
 	return parseAndValidateResumeJson(result.text);
 }
@@ -328,11 +398,24 @@ async function parseDocx(input: ParseDocxInput): Promise<ResumeData> {
 					mediaType: input.mediaType,
 				});
 
-	const result = await generateText({
-		model,
-		system: buildResumeParsingSystemPrompt(docxParserSystemPrompt),
-		messages,
-	}).catch((error: unknown) => logAndRethrow("Failed to generate the text with the model", error));
+	const result = await withAIOperation(
+		{
+			...input,
+			operationName: "ai.parseDocx",
+			metadata: { fileName: input.file.name, mediaType: input.mediaType },
+		},
+		async (telemetry) =>
+			generateText(
+				withTelemetry(
+					{
+						model,
+						system: buildResumeParsingSystemPrompt(docxParserSystemPrompt),
+						messages,
+					},
+					telemetry,
+				),
+			),
+	).catch((error: unknown) => logAndRethrow("Failed to generate the text with the model", error));
 
 	return parseAndValidateResumeJson(result.text);
 }
@@ -351,29 +434,42 @@ async function chat(input: ChatInput) {
 	const model = getModel(input);
 	const systemPrompt = buildChatSystemPrompt(input.resumeData);
 
-	const result = streamText({
-		model,
-		system: systemPrompt,
-		messages: await convertToModelMessages(input.messages),
-		tools: {
-			propose_resume_patches: tool({
-				description:
-					"Return one or more cohesive resume change proposals. Each proposal must include a title, optional summary, and valid JSON Patch operations against the current resume data. The tool validates but does not apply changes.",
-				inputSchema: resumePatchProposalToolInputSchema,
-				outputSchema: resumePatchProposalToolOutputSchema,
-				execute: (toolInput) => {
-					const proposals = normalizeResumePatchProposals(toolInput, input.resumeUpdatedAt);
-
-					for (const proposal of proposals) {
-						applyResumePatches(input.resumeData, proposal.operations);
-					}
-
-					return { proposals };
-				},
-			}),
+	const result = await withAIOperation(
+		{
+			...input,
+			operationName: "ai.chat",
+			metadata: { messageCount: input.messages.length },
 		},
-		stopWhen: stepCountIs(3),
-	});
+		async (telemetry) =>
+			streamText(
+				withTelemetry(
+					{
+						model,
+						system: systemPrompt,
+						messages: await convertToModelMessages(input.messages),
+						tools: {
+							propose_resume_patches: tool({
+								description:
+									"Return one or more cohesive resume change proposals. Each proposal must include a title, optional summary, and valid JSON Patch operations against the current resume data. The tool validates but does not apply changes.",
+								inputSchema: resumePatchProposalToolInputSchema,
+								outputSchema: resumePatchProposalToolOutputSchema,
+								execute: (toolInput) => {
+									const proposals = normalizeResumePatchProposals(toolInput, input.resumeUpdatedAt);
+
+									for (const proposal of proposals) {
+										applyResumePatches(input.resumeData, proposal.operations);
+									}
+
+									return { proposals };
+								},
+							}),
+						},
+						stopWhen: stepCountIs(3),
+					},
+					telemetry,
+				),
+			),
+	);
 
 	return streamToEventIterator(result.toUIMessageStream());
 }
@@ -391,17 +487,29 @@ async function analyzeResume(input: AnalyzeResumeInput): Promise<ResumeAnalysis>
 	const model = getModel(input);
 	const systemPrompt = buildAnalyzeResumeSystemPrompt(input.resumeData);
 
-	const result = await generateText({
-		model,
-		system: systemPrompt,
-		messages: [
-			{
-				role: "user",
-				content:
-					"Analyze this resume and return a structured report with scorecard, overall score, strengths, and actionable suggestions. Return ONLY raw JSON, no markdown fences or explanations.",
-			},
-		],
-	});
+	const result = await withAIOperation(
+		{
+			...input,
+			operationName: "ai.analyzeResume",
+		},
+		async (telemetry) =>
+			generateText(
+				withTelemetry(
+					{
+						model,
+						system: systemPrompt,
+						messages: [
+							{
+								role: "user",
+								content:
+									"Analyze this resume and return a structured report with scorecard, overall score, strengths, and actionable suggestions. Return ONLY raw JSON, no markdown fences or explanations.",
+							},
+						],
+					},
+					telemetry,
+				),
+			),
+	);
 
 	const text = result.text;
 	const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
