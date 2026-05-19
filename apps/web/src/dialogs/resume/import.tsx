@@ -10,6 +10,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import z from "zod";
+import { useAIStore } from "@reactive-resume/ai/store";
 import { parseJSONResume } from "@reactive-resume/import/json-resume";
 import { parseReactiveResumeJSON } from "@reactive-resume/import/reactive-resume-json";
 import { parseReactiveResumeV4JSON } from "@reactive-resume/import/reactive-resume-v4-json";
@@ -121,6 +122,7 @@ async function detectImportType(file: File): Promise<ImportType> {
 
 export function ImportResumeDialog(_: DialogProps<"resume.import">) {
 	const navigate = useNavigate();
+	const observability = useAIStore((state) => state.observability);
 	const closeDialog = useDialogStore((state) => state.closeDialog);
 
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -167,6 +169,7 @@ export function ImportResumeDialog(_: DialogProps<"resume.import">) {
 					const base64 = await fileToBase64(value.file);
 
 					data = await client.ai.parsePdf({
+						observability,
 						file: { name: value.file.name, data: base64 },
 					});
 				}
@@ -184,6 +187,7 @@ export function ImportResumeDialog(_: DialogProps<"resume.import">) {
 							: ("application/vnd.openxmlformats-officedocument.wordprocessingml.document" as const);
 
 					data = await client.ai.parseDocx({
+						observability,
 						mediaType,
 						file: { name: value.file.name, data: base64 },
 					});

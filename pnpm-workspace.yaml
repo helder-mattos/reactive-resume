@@ -11,6 +11,7 @@ allowBuilds:
   lefthook: true
   msgpackr-extract: true
   msw: true
+  protobufjs: false
   sharp: true
 overrides:
   esbuild@>=0.17.0 <0.28.1: ^0.28.1

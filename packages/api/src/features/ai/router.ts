@@ -1,9 +1,11 @@
+import type { AIObservabilityInput } from "@reactive-resume/ai/observability";
 import type { ResumeData } from "@reactive-resume/schema/resume/data";
 import type { UIMessage } from "ai";
 import { ORPCError } from "@orpc/client";
 import { type } from "@orpc/server";
 import { AISDKError } from "ai";
 import { flattenError, ZodError, z } from "zod";
+import { aiObservabilitySchema } from "@reactive-resume/ai/observability";
 import { storedResumeAnalysisSchema } from "@reactive-resume/schema/resume/analysis";
 import { protectedProcedure } from "../../context";
 import { aiRequestRateLimit } from "../../middleware/rate-limit";
@@ -67,7 +69,13 @@ export const aiRouter = {
 				"Extracts structured resume data from a PDF file using the specified AI provider. The file should be sent as a base64-encoded string along with AI provider credentials. Returns a complete ResumeData object. Requires authentication.",
 			successDescription: "The PDF was successfully parsed into structured resume data.",
 		})
-		.input(z.object({ aiProviderId: z.string().optional(), file: fileInputSchema }))
+		.input(
+			z.object({
+				aiProviderId: z.string().optional(),
+				observability: aiObservabilitySchema.optional(),
+				file: fileInputSchema,
+			}),
+		)
 		.use(aiRequestRateLimit)
 		.errors({
 			BAD_GATEWAY: { message: "The AI provider returned an error or is unreachable.", status: 502 },
@@ -81,6 +89,7 @@ export const aiRouter = {
 					model: provider.model,
 					apiKey: provider.apiKey,
 					baseURL: provider.baseURL ?? "",
+					observability: input.observability,
 					file: input.file,
 				});
 			} catch (error) {
@@ -106,6 +115,7 @@ export const aiRouter = {
 		.input(
 			z.object({
 				aiProviderId: z.string().optional(),
+				observability: aiObservabilitySchema.optional(),
 				file: fileInputSchema,
 				mediaType: z.enum([
 					"application/msword",
@@ -126,6 +136,7 @@ export const aiRouter = {
 					model: provider.model,
 					apiKey: provider.apiKey,
 					baseURL: provider.baseURL ?? "",
+					observability: input.observability,
 					mediaType: input.mediaType,
 					file: input.file,
 				});
@@ -151,6 +162,7 @@ export const aiRouter = {
 		.input(
 			type<{
 				aiProviderId?: string;
+				observability?: AIObservabilityInput;
 				messages: UIMessage[];
 				resumeId: string;
 			}>(),
@@ -168,6 +180,7 @@ export const aiRouter = {
 					model: provider.model,
 					apiKey: provider.apiKey,
 					baseURL: provider.baseURL ?? "",
+					observability: input.observability,
 					messages: input.messages,
 					resumeData: resume.data,
 					resumeUpdatedAt: resume.updatedAt,
@@ -194,6 +207,7 @@ export const aiRouter = {
 		.input(
 			z.object({
 				aiProviderId: z.string().optional(),
+				observability: aiObservabilitySchema.optional(),
 				resumeId: z.string(),
 			}),
 		)
@@ -214,6 +228,7 @@ export const aiRouter = {
 					model: provider.model,
 					apiKey: provider.apiKey,
 					baseURL: provider.baseURL ?? "",
+					observability: input.observability,
 					resumeData: resume.data,
 				});
 

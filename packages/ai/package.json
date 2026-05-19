@@ -4,7 +4,9 @@
 	"type": "module",
 	"private": true,
 	"exports": {
+		"./store": "./src/store.ts",
 		"./types": "./src/types.ts",
+		"./observability": "./src/observability/index.ts",
 		"./prompts": "./src/prompts.ts",
 		"./tools/resume-tool-contracts": "./src/tools/resume-tool-contracts.ts",
 		"./tools/patch-proposal": "./src/tools/patch-proposal.ts",
@@ -24,6 +26,7 @@
 		"@reactive-resume/utils": "workspace:*",
 		"deepmerge-ts": "^7.1.5",
 		"jsonrepair": "^3.15.0",
+		"zustand": "^5.0.13",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

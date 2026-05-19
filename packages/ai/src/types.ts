@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export type { AIObservabilityProvider } from "./observability";
+
 const AI_PROVIDERS = [
 	"openai",
 	"anthropic",
