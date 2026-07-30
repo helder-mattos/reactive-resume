@@ -10,6 +10,11 @@ describe("templatePages", () => {
 		expect(registry).toContain("scizor: ScizorPage");
 	});
 
+	it("registers Tauros as a renderable template page", () => {
+		expect(registry).toContain('import { TaurosPage } from "./tauros/TaurosPage";');
+		expect(registry).toContain("tauros: TaurosPage");
+	});
+
 	it("exports the semantic manifest registry through the template index", () => {
 		expect(registry).toContain("getTemplateSemanticManifest");
 		expect(registry).toContain("getTemplateSemanticRegistryFingerprintInput");

@@ -116,4 +116,11 @@ export const templates = {
 		tags: ["Single-column", "ATS friendly", "Uppercase headings", "Executive", "Consulting", "Startup"],
 		sidebarPosition: "none",
 	},
+	tauros: {
+		name: "Tauros",
+		description: msg`Single-column executive layout with uppercase navy headings, a pipe-separated contact line, and compact label-row blocks for senior leadership resumes.`,
+		imageUrl: "/templates/jpg/tauros.jpg",
+		tags: ["Single-column", "ATS friendly", "Executive", "Navy accent", "Label rows", "Leadership"],
+		sidebarPosition: "none",
+	},
 } as const satisfies Record<Template, TemplateMetadata>;

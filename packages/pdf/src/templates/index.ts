@@ -15,6 +15,7 @@ import { OnyxPage } from "./onyx/OnyxPage";
 import { PikachuPage } from "./pikachu/PikachuPage";
 import { RhyhornPage } from "./rhyhorn/RhyhornPage";
 import { ScizorPage } from "./scizor/ScizorPage";
+import { TaurosPage } from "./tauros/TaurosPage";
 
 export const templatePages: Partial<Record<Template, TemplatePage>> = {
 	azurill: AzurillPage,
@@ -32,6 +33,7 @@ export const templatePages: Partial<Record<Template, TemplatePage>> = {
 	pikachu: PikachuPage,
 	rhyhorn: RhyhornPage,
 	scizor: ScizorPage,
+	tauros: TaurosPage,
 };
 
 const defaultTemplatePage = AzurillPage;

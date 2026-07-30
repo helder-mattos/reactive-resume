@@ -18,6 +18,7 @@ import { onyxSemanticManifest } from "../templates/onyx/semantic";
 import { pikachuSemanticManifest } from "../templates/pikachu/semantic";
 import { rhyhornSemanticManifest } from "../templates/rhyhorn/semantic";
 import { scizorSemanticManifest } from "../templates/scizor/semantic";
+import { taurosSemanticManifest } from "../templates/tauros/semantic";
 import { SHARED_BINDING_REGISTRY, STANDARD_FIELD_REGISTRY } from "./binding-inventory";
 
 export type TemplateSemanticPlacement = "main" | "sidebar";
@@ -316,6 +317,7 @@ const TEMPLATE_SEMANTIC_MANIFESTS = {
 	pikachu: pikachuSemanticManifest,
 	rhyhorn: rhyhornSemanticManifest,
 	scizor: scizorSemanticManifest,
+	tauros: taurosSemanticManifest,
 } as const satisfies Readonly<Record<Template, TemplateSemanticManifest>>;
 
 for (const manifest of Object.values(TEMPLATE_SEMANTIC_MANIFESTS)) validateTemplateSemanticManifestShape(manifest);
