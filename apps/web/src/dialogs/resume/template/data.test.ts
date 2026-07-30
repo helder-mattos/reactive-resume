@@ -23,6 +23,7 @@ describe("templates metadata", () => {
 				"pikachu",
 				"rhyhorn",
 				"scizor",
+				"tauros",
 			].sort(),
 		);
 	});
