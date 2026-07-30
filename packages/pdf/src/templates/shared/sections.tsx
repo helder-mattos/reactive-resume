@@ -160,6 +160,8 @@ type SemanticTextRun = {
 	value: string;
 	prefix?: string;
 	suffix?: string;
+	/** Renders this run through Bold instead of Text (e.g. the employer in an executive header). */
+	bold?: boolean;
 };
 
 type SemanticTextRunsProps = {
@@ -250,16 +252,19 @@ export const SemanticTextRuns = ({
 				{...resolvedPdfTextProps(combinedTextResolved)}
 				style={composeStyles(style, ownerResolved.style, combinedTextResolved.style)}
 			>
-				{visibleRuns.map(({ field, value, prefix = "", suffix = "" }, index) => (
-					<Fragment key={field}>
-						{index === 0 ? "" : separator}
-						<Text semanticField={field}>
-							{prefix}
-							{value}
-							{suffix}
-						</Text>
-					</Fragment>
-				))}
+				{visibleRuns.map(({ field, value, prefix = "", suffix = "", bold = false }, index) => {
+					const RunText = bold ? Bold : Text;
+					return (
+						<Fragment key={field}>
+							{index === 0 ? "" : separator}
+							<RunText semanticField={field}>
+								{prefix}
+								{value}
+								{suffix}
+							</RunText>
+						</Fragment>
+					);
+				})}
 			</Text>
 		</SemanticNodeKeyProvider>
 	);
@@ -760,6 +765,7 @@ type ExperienceItemContentProps = {
 };
 
 const ExperienceItemContent = ({ item, header, splitRowStyle, alignEndStyle }: ExperienceItemContentProps) => {
+	const boldRolePosition = useTemplateFeature("companyLocationInlineHeader");
 	const itemNodeKey = useSemanticNodeKey();
 	const renderedChildKeys = useRenderedChildKeys(itemNodeKey);
 	const headerNodeKey = itemNodeKey ? semanticNodeKeys.itemHeader(itemNodeKey) : undefined;
@@ -775,7 +781,11 @@ const ExperienceItemContent = ({ item, header, splitRowStyle, alignEndStyle }: E
 				<Div bindCurrentNode>
 					<SectionItemHeader>
 						<View style={composeStyles(splitRowStyle)}>
-							<Text semanticField="position">{role.position}</Text>
+							{boldRolePosition ? (
+								<Bold semanticField="position">{role.position}</Bold>
+							) : (
+								<Text semanticField="position">{role.position}</Text>
+							)}
 							<Text semanticField="period" style={composeStyles(alignEndStyle)}>
 								{role.period}
 							</Text>
@@ -827,6 +837,7 @@ const ExperienceSection = ({ sectionId = "experience", sectionData }: ItemSectio
 	const splitRowStyle = useSectionSplitRowStyle();
 	const alignEndStyle = useTemplateStyle("alignEnd");
 	const inlineItemHeader = useTemplateFeature("inlineItemHeader");
+	const companyLocationInlineHeader = useTemplateFeature("companyLocationInlineHeader");
 
 	if (items.length === 0) return null;
 
@@ -867,6 +878,35 @@ const ExperienceSection = ({ sectionId = "experience", sectionData }: ItemSectio
 						/>
 					);
 
+					// Executive variant: "Company - Location" as one inline run (company bold) instead of a
+					// space-between row, and no right-aligned location.
+					const renderCompanyLocationHeader = () => (
+						<>
+							<SemanticTextRuns
+								host="experience-company-location"
+								separator=""
+								runs={[
+									{ field: "company", value: item.company, bold: true },
+									{ field: "location", value: item.location, prefix: " - " },
+								]}
+							/>
+
+							{(hasPosition || hasSplitRowText(item.period)) && (
+								<View style={composeStyles(splitRowStyle)}>
+									{hasPosition && <Bold semanticField="position">{item.position}</Bold>}
+									{hasSplitRowText(item.period) && (
+										<SemanticTextRuns
+											host="experience-period"
+											separator=""
+											runs={[{ field: "period", value: item.period }]}
+											style={composeStyles(alignEndStyle)}
+										/>
+									)}
+								</View>
+							)}
+						</>
+					);
+
 					const renderSplitHeader = () => (
 						<>
 							<View style={composeStyles(splitRowStyle)}>
@@ -904,7 +944,13 @@ const ExperienceSection = ({ sectionId = "experience", sectionData }: ItemSectio
 							<ExperienceItemContent
 								item={item}
 								header={
-									<SectionItemHeader>{inlineItemHeader ? renderInlineHeader() : renderSplitHeader()}</SectionItemHeader>
+									<SectionItemHeader>
+										{companyLocationInlineHeader
+											? renderCompanyLocationHeader()
+											: inlineItemHeader
+												? renderInlineHeader()
+												: renderSplitHeader()}
+									</SectionItemHeader>
 								}
 								splitRowStyle={splitRowStyle}
 								alignEndStyle={alignEndStyle}

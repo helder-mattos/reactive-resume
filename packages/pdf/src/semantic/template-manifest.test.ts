@@ -282,59 +282,7 @@ const EXPECTED_PARTS = {
 			route: { parent: "owner", at: { before: { kind: "headline" } } },
 		},
 	},
-	tauros: {
-		"inline-item-header-leading": {
-			key: "inline-item-header-leading",
-			owner: { kind: "item-header", key: "item-header", sectionTypes: ["experience", "education", "volunteer"] },
-			binding: { type: "primitive", primitive: "View", source: "existing" },
-			route: {
-				parent: "owner",
-				at: "start",
-				take: [
-					{ kind: "field", name: "position", sectionTypes: ["experience", "volunteer"] },
-					{ kind: "field", name: "location", sectionTypes: ["experience", "volunteer"] },
-					{ kind: "field", name: "area", sectionTypes: ["education"] },
-					{ kind: "field", name: "degree", sectionTypes: ["education"] },
-				],
-			},
-		},
-		"inline-item-header-middle": {
-			key: "inline-item-header-middle",
-			owner: { kind: "item-header", key: "item-header", sectionTypes: ["experience", "education", "volunteer"] },
-			binding: { type: "primitive", primitive: "View", source: "existing" },
-			route: {
-				parent: "owner",
-				at: "start",
-				take: [
-					{ kind: "field", name: "company" },
-					{ kind: "field", name: "school" },
-					{ kind: "field", name: "organization" },
-					{ kind: "link" },
-				],
-			},
-		},
-		"inline-item-header-trailing": {
-			key: "inline-item-header-trailing",
-			owner: { kind: "item-header", key: "item-header", sectionTypes: ["experience", "education", "volunteer"] },
-			binding: { type: "primitive", primitive: "View", source: "existing" },
-			route: { parent: "owner", at: "start", take: [{ kind: "field", name: "period" }] },
-		},
-		"contact-item-content": {
-			key: "contact-item-content",
-			owner: { kind: "contact-item", key: "contact-item" },
-			binding: {
-				type: "primitive",
-				primitive: { ownerRole: "structured-link", present: "Link", absent: "View" },
-				source: "existing",
-			},
-			route: { parent: "owner", at: "start", take: "all" },
-		},
-		"contact-item-last": {
-			key: "contact-item-last",
-			owner: { kind: "contact-item", key: "contact-item", position: "last" },
-			binding: { type: "alias", canonicalKind: "contact-item", token: "contact-item-last" },
-		},
-	},
+	tauros: {},
 } as const satisfies Readonly<Record<Template, Readonly<Record<string, object>>>>;
 
 const EXPECTED_LAYOUT = {
@@ -476,8 +424,7 @@ const EXPECTED_LAYOUT = {
 	tauros: {
 		regions: [
 			{ name: "header", placement: "main", origins: [] },
-			{ name: "main", placement: "main", origins: ["main"] },
-			{ name: "sidebar", placement: "sidebar", origins: ["sidebar"] },
+			{ name: "main", placement: "main", origins: ["main", "sidebar"] },
 		],
 		header: { region: "header", placement: "main" },
 		specialSummary: null,
@@ -566,20 +513,13 @@ describe("template semantic manifests", () => {
 		expect(parts).toEqual(EXPECTED_PARTS[template]);
 	});
 
-	it("declares outer contact primitive overrides only for templates that wrap contact items", () => {
-		// Rhyhorn and Tauros both render each contact item inside their own outer View
-		// so they can draw a separator between entries; no other template does.
-		const outerContactTemplates = new Set<string>(["rhyhorn", "tauros"]);
-
-		for (const template of outerContactTemplates) {
-			expect(getTemplateSemanticManifest(template as Template).canonicalBindings).toEqual([
-				{ kind: "contact-item", binding: { type: "primitive", primitive: "View", source: "existing" } },
-			]);
-		}
-
+	it("declares Rhyhorn's outer contact primitive override and no unrelated canonical overrides", () => {
+		expect(getTemplateSemanticManifest("rhyhorn").canonicalBindings).toEqual([
+			{ kind: "contact-item", binding: { type: "primitive", primitive: "View", source: "existing" } },
+		]);
 		expect(
 			templateSchema.options
-				.filter((template) => !outerContactTemplates.has(template))
+				.filter((template) => template !== "rhyhorn")
 				.every((template) => getTemplateSemanticManifest(template).canonicalBindings === undefined),
 		).toBe(true);
 	});

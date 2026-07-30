@@ -29,6 +29,12 @@ export type TemplateFeatures = {
 	inlineItemHeader?: boolean;
 	stackSidebarItemHeader?: boolean;
 	mainItemHeaderBorder?: boolean;
+	/**
+	 * Executive experience header: renders "Company - Location" as a single inline run
+	 * (company bold) instead of a space-between split row, and bolds the position on each
+	 * role/entry row. Used by tauros.
+	 */
+	companyLocationInlineHeader?: boolean;
 };
 
 export type SectionTimelineStyleSlots = {

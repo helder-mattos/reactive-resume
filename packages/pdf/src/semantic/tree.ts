@@ -897,7 +897,12 @@ const addCombinedTextHosts = (
 
 	if (node.kind === "item-header" && template !== "meowth") {
 		if (currentSectionType === "experience") {
-			children = [...wrapCombinedFields(node.key, children, ["location"], "experience-location")];
+			// tauros renders an executive header: employer and location share one inline run
+			// ("Company - Location") instead of a space-between row with the location right-aligned.
+			children =
+				template === "tauros"
+					? [...wrapCombinedFields(node.key, children, ["company", "location"], "experience-company-location")]
+					: [...wrapCombinedFields(node.key, children, ["location"], "experience-location")];
 			children = [...wrapCombinedFields(node.key, children, ["period"], "experience-period")];
 		}
 		if (currentSectionType === "education") {

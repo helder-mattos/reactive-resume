@@ -1,5 +1,6 @@
 export type CombinedTextName =
 	| "experience-position-location"
+	| "experience-company-location"
 	| "experience-location"
 	| "experience-period"
 	| "education-area-degree"
