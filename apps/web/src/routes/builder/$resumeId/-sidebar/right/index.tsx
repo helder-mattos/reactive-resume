@@ -6,6 +6,7 @@ import { ScrollArea } from "@reactive-resume/ui/components/scroll-area";
 import { Separator } from "@reactive-resume/ui/components/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@reactive-resume/ui/components/tooltip";
 import { Copyright } from "@/components/ui/copyright";
+import { useCurrentBuilderResumeSelector } from "@/features/resume/builder/draft";
 import { getSectionIcon, getSectionTitle, rightSidebarSections } from "@/libs/resume/section";
 import { BuilderSidebarEdge } from "../../-components/edge";
 import { useBuilderSidebar } from "../../-store/sidebar";
@@ -21,6 +22,25 @@ import { SharingSectionBuilder } from "./sections/sharing";
 import { StatisticsSectionBuilder } from "./sections/statistics";
 import { TemplateSectionBuilder } from "./sections/template";
 import { TypographySectionBuilder } from "./sections/typography";
+
+const sharedPresentationSections = new Set<RightSidebarSection>([
+	"template",
+	"layout",
+	"typography",
+	"design",
+	"styles",
+	"page",
+]);
+
+function visibleSections(variantLocale: string | undefined, variantLayoutMode: "shared" | "custom" | undefined) {
+	if (!variantLocale) return rightSidebarSections;
+	return rightSidebarSections.filter(
+		(section) =>
+			section !== "analysis" &&
+			section !== "styles" &&
+			!(variantLocale && variantLayoutMode === "shared" && sharedPresentationSections.has(section)),
+	);
+}
 
 function getSectionComponent(type: RightSidebarSection) {
 	return match(type)
@@ -41,6 +61,9 @@ function getSectionComponent(type: RightSidebarSection) {
 
 export function BuilderSidebarRight() {
 	const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+	const variantLocale = useCurrentBuilderResumeSelector((resume) => resume.variantLocale);
+	const variantLayoutMode = useCurrentBuilderResumeSelector((resume) => resume.variantLayoutMode);
+	const sections = visibleSections(variantLocale, variantLayoutMode);
 
 	return (
 		<>
@@ -51,7 +74,7 @@ export function BuilderSidebarRight() {
 				className="@container h-[calc(100svh-3.5rem)] overflow-hidden bg-background sm:me-12"
 			>
 				<div className="space-y-4 p-4">
-					{rightSidebarSections.map((section) => (
+					{sections.map((section) => (
 						<Fragment key={section}>
 							{getSectionComponent(section)}
 							<Separator />
@@ -67,6 +90,9 @@ export function BuilderSidebarRight() {
 
 function SidebarEdge() {
 	const { toggleSidebar } = useBuilderSidebar();
+	const variantLocale = useCurrentBuilderResumeSelector((resume) => resume.variantLocale);
+	const variantLayoutMode = useCurrentBuilderResumeSelector((resume) => resume.variantLayoutMode);
+	const sections = visibleSections(variantLocale, variantLayoutMode);
 
 	const scrollToSection = useCallback(
 		(section: RightSidebarSection) => {
@@ -83,7 +109,7 @@ function SidebarEdge() {
 		<BuilderSidebarEdge side="right">
 			<div className="no-scrollbar min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden">
 				<div className="flex min-h-full flex-col items-center justify-center gap-y-2">
-					{rightSidebarSections.map((section) => (
+					{sections.map((section) => (
 						<Tooltip key={section}>
 							<TooltipTrigger
 								render={

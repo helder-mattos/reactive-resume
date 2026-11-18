@@ -90,6 +90,12 @@ export function UpdateInterestDialog({ data }: DialogProps<"resume.sections.inte
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "interests",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<InterestForm form={form} />
 		</SectionItemDialog>

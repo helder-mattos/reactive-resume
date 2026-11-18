@@ -8,8 +8,10 @@ import { useCurrentResume } from "@/features/resume/builder/draft";
 import { SectionBase } from "../shared/section-base";
 
 export function TemplateSectionBuilder() {
+	const resume = useCurrentResume();
+	const sharedLayout = resume.variantLocale && resume.variantLayoutMode === "shared";
 	return (
-		<SectionBase type="template">
+		<SectionBase type="template" className={sharedLayout ? "pointer-events-none opacity-60" : undefined}>
 			<TemplateSectionForm />
 		</SectionBase>
 	);

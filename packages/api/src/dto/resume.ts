@@ -1,10 +1,13 @@
 import type { ResumeData } from "@reactive-resume/schema/resume/data";
+import type { VariantBlockStatuses } from "@reactive-resume/schema/resume/variants";
 import { createSelectSchema } from "drizzle-zod";
 import z from "zod";
+import { aiObservabilitySchema } from "@reactive-resume/ai/observability";
 import * as schema from "@reactive-resume/db/schema";
 import { jsonPatchOperationSchema } from "@reactive-resume/resume/patch";
 import { resumeDataSchema } from "@reactive-resume/schema/resume/data";
 import { semanticStylesheetSchema, stylesheetSourceSchema } from "@reactive-resume/schema/resume/stylesheet";
+import { localeSchema } from "@reactive-resume/utils/locale";
 
 const importedResumeDataSchema = z.custom<ResumeData>((value) => {
 	if (typeof value !== "object" || value === null) return false;
@@ -27,6 +30,22 @@ const resumeSchema = createSelectSchema(schema.resume, {
 	createdAt: z.date().describe("The date and time the resume was created."),
 	updatedAt: z.date().describe("The date and time the resume was last updated."),
 }).omit({ stylesheetRevision: true, renderDataVersion: true });
+
+const variantBlockStatusSchema = z.object({
+	status: z.enum(["up-to-date", "needs-review", "missing", "intentionally-different"]),
+	sourceFingerprint: z.string(),
+});
+
+const variantSchema = z.object({
+	id: z.string(),
+	resumeId: z.string(),
+	locale: localeSchema,
+	data: resumeDataSchema,
+	layoutMode: z.enum(["shared", "custom"]),
+	blockStatuses: z.record(z.string(), variantBlockStatusSchema) as z.ZodType<VariantBlockStatuses>,
+	createdAt: z.date(),
+	updatedAt: z.date(),
+});
 
 const stylesheetMutationCommon = {
 	id: z.string().describe("The ID of the resume."),
@@ -173,6 +192,71 @@ export const resumeDto = {
 	delete: {
 		input: resumeSchema.pick({ id: true }),
 		output: z.void(),
+	},
+
+	variants: {
+		list: {
+			input: z.object({ resumeId: z.string() }),
+			output: z.array(variantSchema),
+		},
+		get: {
+			input: z.object({ resumeId: z.string(), locale: localeSchema }),
+			output: variantSchema,
+		},
+		create: {
+			input: z.object({
+				resumeId: z.string(),
+				locale: localeSchema,
+			}),
+			output: variantSchema,
+		},
+		translate: {
+			input: z.object({
+				resumeId: z.string(),
+				locale: localeSchema,
+				aiProviderId: z.string().optional(),
+				observability: aiObservabilitySchema.optional(),
+			}),
+			output: variantSchema,
+		},
+		translateBlock: {
+			input: z.object({
+				resumeId: z.string(),
+				locale: localeSchema,
+				sectionType: z.string().trim().min(1).max(64),
+				blockId: z.string().trim().min(1),
+				customSectionId: z.string().trim().min(1).optional(),
+				instruction: z.string().trim().max(1000).optional(),
+				aiProviderId: z.string().optional(),
+				observability: aiObservabilitySchema.optional(),
+			}),
+			output: z.object({
+				block: z.record(z.string(), z.unknown()),
+				sectionType: z.string(),
+			}),
+		},
+		update: {
+			input: z
+				.object({
+					resumeId: z.string(),
+					locale: localeSchema,
+					data: resumeDataSchema.optional(),
+					layoutMode: z.enum(["shared", "custom"]).optional(),
+					blockStatuses: z.record(z.string(), variantBlockStatusSchema).optional(),
+					expectedUpdatedAt: z.coerce.date().optional(),
+				})
+				.refine(
+					(value) => value.data !== undefined || value.layoutMode !== undefined || value.blockStatuses !== undefined,
+					{
+						message: "At least one variant field is required.",
+					},
+				),
+			output: variantSchema,
+		},
+		delete: {
+			input: z.object({ resumeId: z.string(), locale: localeSchema }),
+			output: z.void(),
+		},
 	},
 
 	listVersions: {

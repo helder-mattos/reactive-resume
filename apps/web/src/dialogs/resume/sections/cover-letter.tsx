@@ -92,6 +92,12 @@ export function UpdateCoverLetterDialog({ data }: DialogProps<"resume.sections.c
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
 			singleColumn
+			translationAssist={{
+				sectionType: "cover-letter",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<CoverLetterForm form={form} />
 		</SectionItemDialog>

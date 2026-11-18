@@ -42,6 +42,7 @@ import {
 import { aiProviderSchema } from "@reactive-resume/ai/types";
 import { applyResumePatches } from "@reactive-resume/resume/patch";
 import { resumeAnalysisSchema } from "@reactive-resume/schema/resume/analysis";
+import { resumeDataSchema } from "@reactive-resume/schema/resume/data";
 import { withAIObservability } from "../../observability/ai";
 import { supportsProviderNativeWebSearch } from "./capabilities";
 import { resolveAiBaseUrl } from "./url-policy";
@@ -202,7 +203,7 @@ function buildOperationMetadata(input: WithObservabilityInput, extra: Record<str
 	);
 }
 
-async function withAIOperation<T>(
+function withAIOperation<T>(
 	input: WithObservabilityInput & { operationName: string; metadata?: Record<string, unknown> },
 	execute: (telemetry: AIObservabilityTelemetry | undefined) => Promise<T>,
 ): Promise<T> {
@@ -478,6 +479,113 @@ type AnalyzeResumeInput = z.infer<typeof aiCredentialsSchema> & {
 	resumeData: ResumeData;
 };
 
+type TranslateResumeInput = z.infer<typeof aiCredentialsSchema> & {
+	resumeData: ResumeData;
+	targetLocale: string;
+};
+
+type TranslateResumeBlockInput = z.infer<typeof aiCredentialsSchema> & {
+	sourceBlock: Record<string, unknown>;
+	targetBlock: Record<string, unknown>;
+	sectionType: string;
+	targetLocale: string;
+	instruction?: string;
+};
+
+function buildTranslateResumeSystemPrompt(input: TranslateResumeInput): string {
+	return `You are a professional resume translator. Translate only user-facing prose in the supplied ResumeData JSON into ${input.targetLocale}.
+
+Return ONLY one complete raw JSON object that conforms to the supplied ResumeData structure. Preserve every object key, array length and order, item ID, enum, URL, date, period, visibility flag, icon, and all presentation metadata exactly. Do not add, remove, merge, split, or reorder sections or items. Keep HTML tags and links valid; translate text inside HTML without changing its structure. Aim for natural professional wording and a similar text length to the source wherever possible so pagination stays stable. Do not translate proper names, URLs, dates, enum values, or technical identifiers. Set metadata.page.locale to ${input.targetLocale}.
+
+## Source ResumeData
+
+${JSON.stringify(input.resumeData, null, 2)}`;
+}
+
+async function translateResume(input: TranslateResumeInput): Promise<ResumeData> {
+	const model = getModel(input);
+	const result = await withAIOperation(
+		{
+			...input,
+			operationName: "ai.translateResume",
+			metadata: { targetLocale: input.targetLocale },
+		},
+		async (telemetry) =>
+			generateText(
+				withTelemetry(
+					{
+						model,
+						system: buildTranslateResumeSystemPrompt(input),
+						messages: [
+							{
+								role: "user",
+								content: `Translate the resume into ${input.targetLocale}. Return the complete JSON object only.`,
+							},
+						],
+					},
+					telemetry,
+				),
+			),
+	);
+
+	const fenceMatch = result.text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+	const candidate = fenceMatch?.[1] ?? result.text;
+	const firstBrace = candidate.indexOf("{");
+	const lastBrace = candidate.lastIndexOf("}");
+	if (firstBrace === -1 || lastBrace < firstBrace) throw new Error("AI returned no translated resume data.");
+
+	return resumeDataSchema.parse(JSON.parse(candidate.slice(firstBrace, lastBrace + 1)));
+}
+
+function buildTranslateResumeBlockSystemPrompt(input: TranslateResumeBlockInput): string {
+	return `You are a professional resume translator editing one ${input.sectionType} block in a translated resume.
+
+Translate only user-facing prose from the source block into ${input.targetLocale}. Return ONLY one raw JSON object for the target block. Preserve every key, item ID, array length and order, URL, date, period, enum, visibility flag, icon, and presentation value. Do not add, remove, split, merge, or reorder fields. Keep HTML tags and links valid; translate text inside HTML without changing its structure. Do not translate proper names, URLs, dates, enum values, or technical identifiers. Keep the wording polished and close in length to the source so the layout remains stable.
+
+The target block may already contain edits. Preserve those non-translatable values and use the target block's structure as the output shape.
+
+${input.instruction?.trim() ? `Additional user instruction (follow it only if it does not conflict with the rules above):\n${input.instruction.trim()}\n` : ""}
+## Source block\n${JSON.stringify(input.sourceBlock, null, 2)}
+
+## Current target block\n${JSON.stringify(input.targetBlock, null, 2)}`;
+}
+
+async function translateResumeBlock(input: TranslateResumeBlockInput): Promise<Record<string, unknown>> {
+	const model = getModel(input);
+	const result = await withAIOperation(
+		{
+			...input,
+			operationName: "ai.translateResumeBlock",
+			metadata: { sectionType: input.sectionType, targetLocale: input.targetLocale },
+		},
+		async (telemetry) =>
+			generateText(
+				withTelemetry(
+					{
+						model,
+						system: buildTranslateResumeBlockSystemPrompt(input),
+						messages: [
+							{
+								role: "user",
+								content: "Translate this block and return the complete target block JSON only.",
+							},
+						],
+					},
+					telemetry,
+				),
+			),
+	);
+
+	const fenceMatch = result.text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+	const candidate = fenceMatch?.[1] ?? result.text;
+	const firstBrace = candidate.indexOf("{");
+	const lastBrace = candidate.lastIndexOf("}");
+	if (firstBrace === -1 || lastBrace < firstBrace) throw new Error("AI returned no translated block data.");
+
+	const parsed = JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
+	return z.record(z.string(), z.unknown()).parse(parsed);
+}
+
 function buildAnalyzeResumeSystemPrompt(resumeData: ResumeData): string {
 	return `${analyzeResumeSystemPromptTemplate}\n\n## Resume Data\n\n${JSON.stringify(resumeData, null, 2)}`;
 }
@@ -533,5 +641,7 @@ export const aiService = {
 	chat,
 	parseDocx,
 	parsePdf,
+	translateResume,
+	translateResumeBlock,
 	testConnection,
 };

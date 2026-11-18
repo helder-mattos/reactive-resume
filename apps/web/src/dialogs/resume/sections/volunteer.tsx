@@ -86,6 +86,12 @@ export function UpdateVolunteerDialog({ data }: DialogProps<"resume.sections.vol
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "volunteer",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<VolunteerForm form={form} />
 		</SectionItemDialog>

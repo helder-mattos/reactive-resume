@@ -9,6 +9,7 @@ import { defaultResumeData } from "@reactive-resume/schema/resume/default";
 import {
 	isEditableElementFocused,
 	useBuilderResumeUpdateSubscription,
+	useCurrentBuilderResumeSelector,
 	useResumeStore,
 	useResumeUpdateSubscription,
 } from "./draft";
@@ -18,6 +19,7 @@ const orpcMocks = vi.hoisted(() => ({
 	patchResume: vi.fn(),
 	streamSubscribe: vi.fn(),
 	updateResume: vi.fn(),
+	updateVariant: vi.fn(),
 }));
 
 const consumeEventIteratorMock = vi.hoisted(() => vi.fn());
@@ -65,6 +67,22 @@ vi.mock("@/libs/orpc/client", () => ({
 			},
 			update: {
 				call: orpcMocks.updateResume,
+			},
+			variants: {
+				get: {
+					call: vi.fn(),
+					queryOptions: ({ input }: { input: { resumeId: string; locale: string } }) => ({
+						queryKey: ["resume", "variant", input.resumeId, input.locale],
+					}),
+				},
+				list: {
+					queryOptions: ({ input }: { input: { resumeId: string } }) => ({
+						queryKey: ["resume", "variants", input.resumeId],
+					}),
+				},
+				update: {
+					call: orpcMocks.updateVariant,
+				},
 			},
 		},
 	},
@@ -129,6 +147,7 @@ describe("builder resume autosave", () => {
 		orpcMocks.patchResume.mockReset();
 		orpcMocks.streamSubscribe.mockReset();
 		orpcMocks.updateResume.mockReset();
+		orpcMocks.updateVariant.mockReset();
 		consumeEventIteratorMock.mockReset();
 		queryClientMock.setQueryData.mockClear();
 		routerParamsMock.value = {};
@@ -143,6 +162,16 @@ describe("builder resume autosave", () => {
 		vi.clearAllTimers();
 		vi.useRealTimers();
 		useResumeStore.getState().reset();
+	});
+
+	it("allows selectors whose value is undefined on the primary resume", () => {
+		const initial = makeResume("resume-primary-selector");
+		routerParamsMock.value = { resumeId: initial.id };
+		useResumeStore.getState().initialize(initial);
+
+		const { result } = renderHook(() => useCurrentBuilderResumeSelector((resume) => resume.variantLocale));
+
+		expect(result.current).toBeUndefined();
 	});
 
 	it("coalesces rapid local edits into one full-data update", async () => {
@@ -167,6 +196,87 @@ describe("builder resume autosave", () => {
 			expect.objectContaining({ signal: expect.any(AbortSignal) }),
 		);
 		expect(orpcMocks.patchResume).not.toHaveBeenCalled();
+	});
+
+	it("keeps a variant autosave alive while switching languages before debounce", async () => {
+		const variant = {
+			...makeResume("resume-language"),
+			variantLocale: "fr-FR",
+			variantId: "variant-fr",
+			variantLayoutMode: "shared" as const,
+		};
+		const updatedVariant = withBasicsName(variant, "Nom traduit");
+		orpcMocks.updateVariant.mockResolvedValue({
+			id: "variant-fr",
+			resumeId: variant.id,
+			locale: "fr-FR",
+			data: updatedVariant.data,
+			layoutMode: "shared",
+			blockStatuses: {},
+			updatedAt: new Date("2026-05-26T12:01:00.000Z"),
+		});
+
+		useResumeStore.getState().initialize(variant);
+		useResumeStore.getState().updateResumeData((draft) => {
+			draft.basics.name = "Nom traduit";
+		});
+		useResumeStore.getState().initialize(makeResume(variant.id));
+		vi.advanceTimersByTime(500);
+		await flushMicrotasks();
+
+		expect(orpcMocks.updateVariant).toHaveBeenCalledTimes(1);
+		expect(orpcMocks.updateVariant.mock.calls[0]?.[0]).toMatchObject({
+			resumeId: variant.id,
+			locale: "fr-FR",
+			data: updatedVariant.data,
+		});
+		expect(orpcMocks.updateResume).not.toHaveBeenCalled();
+	});
+
+	it("keeps a newer variant edit when switching away and back during an in-flight save", async () => {
+		const variant = { ...makeResume("resume-language-flight"), variantLocale: "fr-FR", variantId: "variant-fr" };
+		const first = withBasicsName(variant, "Première version");
+		const latest = withBasicsName(variant, "Version finale");
+		let resolveFirst!: (value: unknown) => void;
+		orpcMocks.updateVariant
+			.mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)))
+			.mockResolvedValueOnce({
+				id: "variant-fr",
+				resumeId: variant.id,
+				locale: "fr-FR",
+				data: latest.data,
+				layoutMode: "shared",
+				blockStatuses: {},
+				createdAt: new Date("2026-05-26T12:00:00.000Z"),
+				updatedAt: new Date("2026-05-26T12:02:00.000Z"),
+			});
+
+		useResumeStore.getState().initialize(variant);
+		useResumeStore.getState().updateResumeData((draft) => {
+			draft.basics.name = "Première version";
+		});
+		vi.advanceTimersByTime(500);
+		await flushMicrotasks();
+		useResumeStore.getState().updateResumeData((draft) => {
+			draft.basics.name = "Version finale";
+		});
+		useResumeStore.getState().initialize(makeResume(variant.id));
+		useResumeStore.getState().initialize(variant);
+		expect(useResumeStore.getState().resume?.data.basics.name).toBe("Version finale");
+
+		resolveFirst({
+			id: "variant-fr",
+			resumeId: variant.id,
+			locale: "fr-FR",
+			data: first.data,
+			layoutMode: "shared",
+			blockStatuses: {},
+			createdAt: new Date("2026-05-26T12:00:00.000Z"),
+			updatedAt: new Date("2026-05-26T12:01:00.000Z"),
+		});
+		await flushMicrotasks();
+		expect(orpcMocks.updateVariant).toHaveBeenCalledTimes(2);
+		expect(useResumeStore.getState().resume?.data.basics.name).toBe("Version finale");
 	});
 
 	it("saves the latest pending snapshot after an in-flight save resolves", async () => {

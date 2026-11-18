@@ -16,8 +16,10 @@ import { SectionBase } from "../../shared/section-base";
 import { LayoutPages } from "./pages";
 
 export function LayoutSectionBuilder() {
+	const resume = useCurrentResume();
+	const sharedLayout = resume.variantLocale && resume.variantLayoutMode === "shared";
 	return (
-		<SectionBase type="layout" className="space-y-4">
+		<SectionBase type="layout" className={`space-y-4 ${sharedLayout ? "pointer-events-none opacity-60" : ""}`}>
 			<LayoutPages />
 			<LayoutSectionForm />
 		</SectionBase>

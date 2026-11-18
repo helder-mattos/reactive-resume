@@ -5,6 +5,7 @@ import { Outlet } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { ResizableGroup, ResizablePanel, ResizableSeparator } from "@reactive-resume/ui/components/resizable";
+import { useResume } from "@/features/resume/builder/draft";
 import { BuilderSidebarLeft } from "../-sidebar/left";
 import { BuilderSidebarRight } from "../-sidebar/right";
 import {
@@ -20,6 +21,14 @@ export type BuilderLayoutShellProps = {
 };
 
 export function DesktopBuilderShell({ initialLayout }: BuilderLayoutShellProps) {
+	const resume = useResume();
+
+	if (!resume) return null;
+
+	return <DesktopBuilderShellContent initialLayout={initialLayout} />;
+}
+
+function DesktopBuilderShellContent({ initialLayout }: BuilderLayoutShellProps) {
 	// Only rendered when `BuilderLayoutShell` has already decided we're on desktop, so sidebar sizing is unconditional.
 	const canPersistLayoutRef = useRef(false);
 

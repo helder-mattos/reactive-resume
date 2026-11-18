@@ -85,6 +85,12 @@ export function UpdateLanguageDialog({ data }: DialogProps<"resume.sections.lang
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "languages",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<LanguageForm form={form} />
 		</SectionItemDialog>

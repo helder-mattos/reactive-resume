@@ -19,8 +19,10 @@ import { useAppForm } from "@/libs/tanstack-form";
 import { SectionBase } from "../shared/section-base";
 
 export function TypographySectionBuilder() {
+	const resume = useResume();
+	const sharedLayout = resume?.variantLocale && resume.variantLayoutMode === "shared";
 	return (
-		<SectionBase type="typography">
+		<SectionBase type="typography" className={sharedLayout ? "pointer-events-none opacity-60" : undefined}>
 			<TypographySectionForm />
 		</SectionBase>
 	);

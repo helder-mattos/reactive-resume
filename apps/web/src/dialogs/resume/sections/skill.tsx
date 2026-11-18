@@ -94,6 +94,12 @@ export function UpdateSkillDialog({ data }: DialogProps<"resume.sections.skills.
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "skills",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<SkillForm form={form} />
 		</SectionItemDialog>

@@ -86,6 +86,12 @@ export function UpdateCertificationDialog({ data }: DialogProps<"resume.sections
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "certifications",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<CertificationForm form={form} />
 		</SectionItemDialog>

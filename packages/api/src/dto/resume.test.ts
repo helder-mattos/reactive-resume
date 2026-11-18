@@ -4,6 +4,34 @@ import { redactResumeForViewer } from "../features/resume/access-policy";
 import { resumeDto } from "./resume";
 
 describe("resume DTO output validation", () => {
+	it("validates language variant payloads and layout modes", () => {
+		const parsed = resumeDto.variants.create.input.parse({
+			resumeId: "resume-id",
+			locale: "fr-FR",
+		});
+		expect(parsed.locale).toBe("fr-FR");
+		expect(
+			resumeDto.variants.translate.input.parse({
+				resumeId: "resume-id",
+				locale: "fr-FR",
+				aiProviderId: "provider-id",
+			}).aiProviderId,
+		).toBe("provider-id");
+		expect(resumeDto.variants.update.input.safeParse({ resumeId: "resume-id", locale: "fr-FR" }).success).toBe(false);
+		expect(
+			resumeDto.variants.update.input.safeParse({ resumeId: "resume-id", locale: "fr-FR", layoutMode: "custom" })
+				.success,
+		).toBe(true);
+		expect(
+			resumeDto.variants.translateBlock.input.parse({
+				resumeId: "resume-id",
+				locale: "fr-FR",
+				sectionType: "experience",
+				blockId: "experience-1",
+				instruction: "Keep the company name unchanged",
+			}).instruction,
+		).toBe("Keep the company name unchanged");
+	});
 	it("normalizes ordinary PUT data without losing compatible custom-section overlap", () => {
 		const parsed = resumeDto.update.input.parse({
 			id: "resume-id",

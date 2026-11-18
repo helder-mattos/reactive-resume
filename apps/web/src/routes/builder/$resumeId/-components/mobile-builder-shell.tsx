@@ -6,7 +6,7 @@ import { EyeIcon, NotePencilIcon, PaletteIcon } from "@phosphor-icons/react";
 import { Outlet } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { cn } from "@reactive-resume/utils/style";
-import { usePreviewPausedStore } from "@/features/resume/builder/draft";
+import { usePreviewPausedStore, useResume } from "@/features/resume/builder/draft";
 import { BuilderSidebarLeft } from "../-sidebar/left";
 import { BuilderSidebarRight } from "../-sidebar/right";
 import { BuilderHeader } from "./header";
@@ -67,6 +67,14 @@ function MobileBuilderTabBar({ activeTab, onTabChange }: MobileBuilderTabBarProp
 }
 
 export function MobileBuilderShell() {
+	const resume = useResume();
+
+	if (!resume) return null;
+
+	return <MobileBuilderShellContent />;
+}
+
+function MobileBuilderShellContent() {
 	// Local state is enough — mobile view mode is shell-scoped and doesn't need to persist.
 	const [tab, setTab] = useState<MobileBuilderTab>("edit");
 	const setPreviewPaused = usePreviewPausedStore((state) => state.setPaused);

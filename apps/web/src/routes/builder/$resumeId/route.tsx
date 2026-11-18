@@ -1,8 +1,12 @@
+import type { Resume } from "@/features/resume/builder/draft";
 import type { BuilderLayout } from "./-store/sidebar";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { useMediaQuery } from "usehooks-ts";
+import z from "zod";
+import { getResumeTextLengthDrift } from "@reactive-resume/schema/resume/variants";
+import { localeSchema } from "@reactive-resume/utils/locale";
 import { useBuilderResumeUpdateSubscription, useResumeCleanup, useResumeStore } from "@/features/resume/builder/draft";
 import { initializeStylesheetStore, useStylesheetStore } from "@/features/resume/stylesheet/store";
 import { orpc } from "@/libs/orpc/client";
@@ -13,6 +17,7 @@ import { getBuilderLayout } from "./-store/sidebar";
 
 export const Route = createFileRoute("/builder/$resumeId")({
 	component: RouteComponent,
+	validateSearch: z.object({ locale: z.string().optional() }),
 	beforeLoad: ({ context }) => {
 		if (!context.session) throw redirect({ to: "/auth/login", replace: true });
 		return { session: context.session };
@@ -22,10 +27,12 @@ export const Route = createFileRoute("/builder/$resumeId")({
 			getBuilderLayout(),
 			context.queryClient.ensureQueryData(orpc.resume.getById.queryOptions({ input: { id: params.resumeId } })),
 			context.queryClient.ensureQueryData(
+				orpc.resume.variants.list.queryOptions({ input: { resumeId: params.resumeId } }),
+			),
+			context.queryClient.ensureQueryData(
 				orpc.resume.stylesheet.getState.queryOptions({ input: { id: params.resumeId } }),
 			),
 		]);
-
 		return { layout, name: resume.name };
 	},
 	head: ({ loaderData }) => ({
@@ -39,26 +46,62 @@ function RouteComponent() {
 	const { layout: initialLayout } = Route.useLoaderData();
 
 	const { resumeId } = Route.useParams();
+	const { locale } = Route.useSearch();
+	const navigate = useNavigate();
 	const { data: resume } = useSuspenseQuery(orpc.resume.getById.queryOptions({ input: { id: resumeId } }));
+	const { data: variants } = useSuspenseQuery(orpc.resume.variants.list.queryOptions({ input: { resumeId } }));
 	const { data: stylesheet } = useSuspenseQuery(
 		orpc.resume.stylesheet.getState.queryOptions({ input: { id: resumeId } }),
 	);
 	const initializeResumeStore = useResumeStore((state) => state.initialize);
 	const mergeResumeMetadata = useResumeStore((state) => state.mergeResumeMetadata);
-	const isReady = useResumeStore((state) => state.isReady);
-	const initializedResumeId = useResumeStore((state) => state.resumeId);
-	const isInitialized = isReady && initializedResumeId === resumeId;
+	const initializedResume = useResumeStore((state) => state.resume);
+	const primaryLocale = resume.data.metadata.page.locale;
+	const validRequestedLocale = locale === undefined || localeSchema.safeParse(locale).success;
+	const activeVariantQuery = useQuery({
+		...orpc.resume.variants.get.queryOptions({
+			input: { resumeId, locale: (locale ?? primaryLocale) as never },
+		}),
+		enabled: Boolean(validRequestedLocale && locale && locale !== primaryLocale),
+	});
+	const selectedVariant =
+		validRequestedLocale && locale && locale !== primaryLocale ? activeVariantQuery.data : undefined;
+	const hasRequestedVariant =
+		!locale ||
+		(validRequestedLocale && (locale === primaryLocale || variants.some((variant) => variant.locale === locale)));
+	const activeResume = (
+		selectedVariant
+			? {
+					...resume,
+					data: selectedVariant.data,
+					updatedAt: selectedVariant.updatedAt,
+					variantLocale: selectedVariant.locale,
+					variantId: selectedVariant.id,
+					variantLayoutMode: selectedVariant.layoutMode,
+					variantBlockStatuses: selectedVariant.blockStatuses,
+					variantTextLengthDrift: getResumeTextLengthDrift(resume.data, selectedVariant.data),
+				}
+			: resume
+	) as Resume;
+	const isInitialized =
+		initializedResume?.id === resumeId && initializedResume?.variantLocale === selectedVariant?.locale;
 	const isStylesheetInitialized = useStylesheetStore((state) => state.resumeId === resumeId);
-	const stylesheetInitialization = useRef({ resume, stylesheet });
-	stylesheetInitialization.current = { resume, stylesheet };
+	const stylesheetInitialization = useRef({ resume: activeResume, stylesheet });
+	stylesheetInitialization.current = { resume: activeResume, stylesheet };
 
 	useResumeCleanup();
 	useBuilderResumeUpdateSubscription();
 
 	useEffect(() => {
+		if (!hasRequestedVariant || locale === primaryLocale) {
+			void navigate({ to: "/builder/$resumeId", params: { resumeId }, search: {}, replace: true });
+		}
+	}, [hasRequestedVariant, locale, navigate, primaryLocale, resumeId]);
+
+	useEffect(() => {
 		if (isInitialized) return;
-		initializeResumeStore(resume);
-	}, [initializeResumeStore, isInitialized, resume]);
+		initializeResumeStore(activeResume);
+	}, [activeResume, initializeResumeStore, isInitialized]);
 
 	useEffect(() => {
 		if (!isInitialized) return;
@@ -71,21 +114,11 @@ function RouteComponent() {
 	}, [isInitialized, resumeId]);
 
 	useEffect(() => {
-		mergeResumeMetadata(resume);
-	}, [
-		mergeResumeMetadata,
-		resume.id,
-		resume.name,
-		resume.slug,
-		resume.tags,
-		resume.isLocked,
-		resume.isPublic,
-		resume.hasPassword,
-		resume.updatedAt,
-		resume,
-	]);
+		mergeResumeMetadata(activeResume);
+	}, [mergeResumeMetadata, activeResume]);
 
-	if (!isInitialized || !isStylesheetInitialized) return null;
+	if ((locale && locale !== primaryLocale && !activeVariantQuery.data) || !isInitialized || !isStylesheetInitialized)
+		return null;
 
 	return <BuilderLayoutShell initialLayout={initialLayout} />;
 }

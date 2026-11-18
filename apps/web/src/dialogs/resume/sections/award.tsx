@@ -87,6 +87,12 @@ export function UpdateAwardDialog({ data }: DialogProps<"resume.sections.awards.
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "awards",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<AwardForm form={form} />
 		</SectionItemDialog>

@@ -94,6 +94,12 @@ export function UpdateExperienceDialog({ data }: DialogProps<"resume.sections.ex
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "experience",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<ExperienceForm form={form} />
 		</SectionItemDialog>

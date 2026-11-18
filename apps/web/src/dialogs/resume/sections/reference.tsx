@@ -86,6 +86,12 @@ export function UpdateReferenceDialog({ data }: DialogProps<"resume.sections.ref
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "references",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<ReferenceForm form={form} />
 		</SectionItemDialog>

@@ -97,6 +97,12 @@ export function UpdateProfileDialog({ data }: DialogProps<"resume.sections.profi
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "profiles",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<ProfileForm form={form} />
 		</SectionItemDialog>

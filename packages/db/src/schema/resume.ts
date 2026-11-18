@@ -1,5 +1,6 @@
 import type { StoredResumeAnalysis } from "@reactive-resume/schema/resume/analysis";
 import type { ResumeData } from "@reactive-resume/schema/resume/data";
+import type { VariantBlockStatuses, VariantLayoutMode } from "@reactive-resume/schema/resume/variants";
 import * as pg from "drizzle-orm/pg-core";
 import { defaultResumeData } from "@reactive-resume/schema/resume/default";
 import { generateId } from "@reactive-resume/utils/string";
@@ -68,6 +69,34 @@ export const resumeVersion = pg.pgTable(
 		createdAt: pg.timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [pg.index().on(t.resumeId, t.createdAt.desc())],
+);
+
+// A resume keeps its original data in `resume.data`. Each optional language variant owns a complete,
+// independently renderable document, so old API/PDF consumers remain backwards compatible.
+export const resumeVariant = pg.pgTable(
+	"resume_variant",
+	{
+		id: pg
+			.text("id")
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => generateId()),
+		resumeId: pg
+			.text("resume_id")
+			.notNull()
+			.references(() => resume.id, { onDelete: "cascade" }),
+		locale: pg.text("locale").notNull(),
+		data: pg.jsonb("data").notNull().$type<ResumeData>(),
+		layoutMode: pg.text("layout_mode").notNull().$type<VariantLayoutMode>().default("shared"),
+		blockStatuses: pg.jsonb("block_statuses").notNull().$type<VariantBlockStatuses>().default({}),
+		createdAt: pg.timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: pg
+			.timestamp("updated_at", { withTimezone: true })
+			.notNull()
+			.defaultNow()
+			.$onUpdate(() => new Date()),
+	},
+	(t) => [pg.unique().on(t.resumeId, t.locale), pg.index().on(t.resumeId)],
 );
 
 export const resumeStatistics = pg.pgTable("resume_statistics", {

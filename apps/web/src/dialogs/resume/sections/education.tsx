@@ -89,6 +89,12 @@ export function UpdateEducationDialog({ data }: DialogProps<"resume.sections.edu
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "education",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<EducationForm form={form} />
 		</SectionItemDialog>

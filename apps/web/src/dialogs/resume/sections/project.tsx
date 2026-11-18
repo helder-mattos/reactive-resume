@@ -85,6 +85,12 @@ export function UpdateProjectDialog({ data }: DialogProps<"resume.sections.proje
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "projects",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<ProjectForm form={form} />
 		</SectionItemDialog>

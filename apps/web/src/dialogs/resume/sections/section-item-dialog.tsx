@@ -8,6 +8,14 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@reactive-resume/ui/components/dialog";
+import { TranslatedEditorAssist } from "./translated-editor-assist";
+
+type TranslationAssistProps = {
+	sectionType: string;
+	blockId: string;
+	customSectionId?: string;
+	onApply: (block: Record<string, unknown>) => void;
+};
 
 type SectionItemDialogProps = {
 	/** Full dialog title — pass a Trans node so i18n extraction works per-file */
@@ -23,6 +31,8 @@ type SectionItemDialogProps = {
 	submitLabel: ReactNode;
 	/** When true, uses a single-column form layout (cover-letter, summary-item) */
 	singleColumn?: boolean;
+	/** Shows the primary-language reference and block-level AI translation for a variant editor. */
+	translationAssist?: TranslationAssistProps;
 	children: ReactNode;
 };
 
@@ -39,6 +49,7 @@ export function SectionItemDialog({
 	isSubmitting,
 	submitLabel,
 	singleColumn = false,
+	translationAssist,
 	children,
 }: SectionItemDialogProps) {
 	return (
@@ -59,6 +70,7 @@ export function SectionItemDialog({
 					onSubmit();
 				}}
 			>
+				{translationAssist ? <TranslatedEditorAssist {...translationAssist} /> : null}
 				{children}
 
 				<DialogFooter className={singleColumn ? undefined : "sm:col-span-full"}>

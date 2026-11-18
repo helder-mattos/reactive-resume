@@ -21,8 +21,10 @@ import { useAppForm } from "@/libs/tanstack-form";
 import { SectionBase } from "../shared/section-base";
 
 export function DesignSectionBuilder() {
+	const resume = useCurrentResume();
+	const sharedLayout = resume.variantLocale && resume.variantLayoutMode === "shared";
 	return (
-		<SectionBase type="design" className="space-y-6">
+		<SectionBase type="design" className={`space-y-6 ${sharedLayout ? "pointer-events-none opacity-60" : ""}`}>
 			<ColorSectionForm />
 			<Separator />
 			<LevelSectionForm />

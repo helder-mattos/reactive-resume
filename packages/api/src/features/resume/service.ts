@@ -1,6 +1,7 @@
 import type { JsonPatchOperation } from "@reactive-resume/resume/patch";
 import type { StoredResumeAnalysis } from "@reactive-resume/schema/resume/analysis";
 import type { ResumeData } from "@reactive-resume/schema/resume/data";
+import type { VariantBlockStatuses, VariantLayoutMode, VariantStatus } from "@reactive-resume/schema/resume/variants";
 import type { Locale } from "@reactive-resume/utils/locale";
 import type { ResumeUpdatedEvent } from "./events";
 import { ORPCError } from "@orpc/client";
@@ -12,6 +13,7 @@ import { db } from "@reactive-resume/db/client";
 import * as schema from "@reactive-resume/db/schema";
 import { applyResumePatches, ResumePatchError } from "@reactive-resume/resume/patch";
 import { defaultResumeData } from "@reactive-resume/schema/resume/default";
+import { getResumeBlockFingerprints, reconcileVariantBlockStatuses } from "@reactive-resume/schema/resume/variants";
 import { generateId } from "@reactive-resume/utils/string";
 import { getStorageService } from "../storage/service";
 import { grantResumeAccess, hasResumeAccess } from "./access";
@@ -22,6 +24,70 @@ import { hasRenderDataChanged, preserveServerStylesheet } from "./stylesheet-pre
 import { clientKeyFromHeaders, shouldCountView } from "./view-dedup";
 
 type DbOrTx = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+type VariantRow = typeof schema.resumeVariant.$inferSelect;
+
+function variantResponse(row: VariantRow) {
+	return {
+		...row,
+		locale: row.locale as Locale,
+		data: parseStoredResumeData(row.data),
+		layoutMode: row.layoutMode as VariantLayoutMode,
+		blockStatuses: (row.blockStatuses ?? {}) as VariantBlockStatuses,
+	};
+}
+
+/** Keep review metadata in sync when the primary language changes. This is deliberately conservative:
+ * it never edits translated copy or silently clears an intentional difference. */
+async function reconcileVariantReviewState(
+	client: DbOrTx,
+	input: { resumeId: string; previous: ResumeData; next: ResumeData },
+) {
+	const [variants, previousSource, nextSource] = await Promise.all([
+		client
+			.select({
+				id: schema.resumeVariant.id,
+				data: schema.resumeVariant.data,
+				layoutMode: schema.resumeVariant.layoutMode,
+				blockStatuses: schema.resumeVariant.blockStatuses,
+			})
+			.from(schema.resumeVariant)
+			.where(eq(schema.resumeVariant.resumeId, input.resumeId)),
+		Promise.resolve(getResumeBlockFingerprints(input.previous)),
+		Promise.resolve(getResumeBlockFingerprints(input.next)),
+	]);
+
+	for (const variant of variants) {
+		const blockStatuses = reconcileVariantBlockStatuses(
+			previousSource,
+			nextSource,
+			(variant.blockStatuses ?? {}) as VariantBlockStatuses,
+		);
+		const data = parseStoredResumeData(variant.data);
+		// A shared variant follows primary pagination/layout changes but keeps its locale and copy.
+		if (variant.layoutMode === "shared") {
+			data.metadata.template = input.next.metadata.template;
+			data.metadata.layout = structuredClone(input.next.metadata.layout);
+			data.metadata.design = structuredClone(input.next.metadata.design);
+			data.metadata.typography = structuredClone(input.next.metadata.typography);
+			data.metadata.page = {
+				...data.metadata.page,
+				gapX: input.next.metadata.page.gapX,
+				gapY: input.next.metadata.page.gapY,
+				marginX: input.next.metadata.page.marginX,
+				marginY: input.next.metadata.page.marginY,
+				format: input.next.metadata.page.format,
+				hideLinkUnderline: input.next.metadata.page.hideLinkUnderline,
+				hideIcons: input.next.metadata.page.hideIcons,
+				hideSectionIcons: input.next.metadata.page.hideSectionIcons,
+			};
+		}
+		await client
+			.update(schema.resumeVariant)
+			.set({ data, blockStatuses })
+			.where(eq(schema.resumeVariant.id, variant.id));
+	}
+}
 
 function resumeVersionConflict(updatedAt: Date) {
 	return new ORPCError("RESUME_VERSION_CONFLICT", {
@@ -183,6 +249,24 @@ async function applyResumePatchTx(
 	}
 
 	patchedData = parseWritableResumeData(preserveServerStylesheet(existing.data, patchedData));
+	if (patchedData.metadata.page.locale !== existing.data.metadata.page.locale) {
+		const [localeCollision] = await client
+			.select({ id: schema.resumeVariant.id })
+			.from(schema.resumeVariant)
+			.where(
+				and(
+					eq(schema.resumeVariant.resumeId, input.id),
+					eq(schema.resumeVariant.locale, patchedData.metadata.page.locale),
+				),
+			)
+			.limit(1);
+		if (localeCollision) {
+			throw new ORPCError("BAD_REQUEST", {
+				status: 400,
+				message: "The primary resume locale is already used by a language variant.",
+			});
+		}
+	}
 	if (
 		existing.data.metadata.stylesheet?.mode === "semantic" &&
 		JSON.stringify(existing.data.metadata.styleRules) !== JSON.stringify(patchedData.metadata.styleRules)
@@ -191,6 +275,8 @@ async function applyResumePatchTx(
 	}
 
 	const renderDataChanged = hasRenderDataChanged(existing.data, patchedData);
+	// `existing` was selected FOR UPDATE above, so the application-level version check is
+	// sufficient here; comparing timestamp equality in SQL loses PostgreSQL microsecond precision.
 	const [resume] = await client
 		.update(schema.resume)
 		.set({
@@ -198,12 +284,7 @@ async function applyResumePatchTx(
 			...(renderDataChanged ? { renderDataVersion: existing.renderDataVersion + 1 } : {}),
 		})
 		.where(
-			and(
-				eq(schema.resume.id, input.id),
-				eq(schema.resume.isLocked, false),
-				eq(schema.resume.userId, input.userId),
-				...(input.expectedUpdatedAt ? [eq(schema.resume.updatedAt, input.expectedUpdatedAt)] : []),
-			),
+			and(eq(schema.resume.id, input.id), eq(schema.resume.isLocked, false), eq(schema.resume.userId, input.userId)),
 		)
 		.returning({
 			id: schema.resume.id,
@@ -221,6 +302,12 @@ async function applyResumePatchTx(
 		if (input.expectedUpdatedAt) throw resumeVersionConflict(existing.updatedAt);
 		throw new ORPCError("NOT_FOUND");
 	}
+
+	await reconcileVariantReviewState(client, {
+		resumeId: resume.id,
+		previous: existing.data,
+		next: patchedData,
+	});
 
 	// Checkpoint every patch (AI/API edit) atomically within the same transaction as the edit.
 	// ponytail: a multi-patch agent turn writes one row per patch; the prune cap (30) bounds it.
@@ -422,6 +509,242 @@ export const resumeService = {
 	tags,
 	statistics,
 	analysis,
+
+	variants: {
+		list: async (input: { resumeId: string; userId: string }) => {
+			const [owner] = await db
+				.select({ id: schema.resume.id })
+				.from(schema.resume)
+				.where(and(eq(schema.resume.id, input.resumeId), eq(schema.resume.userId, input.userId)));
+			if (!owner) throw new ORPCError("NOT_FOUND");
+
+			const rows = await db
+				.select()
+				.from(schema.resumeVariant)
+				.where(eq(schema.resumeVariant.resumeId, input.resumeId))
+				.orderBy(asc(schema.resumeVariant.createdAt));
+			return rows.map(variantResponse);
+		},
+
+		get: async (input: { resumeId: string; locale: string; userId: string }) => {
+			const [row] = await db
+				.select({ variant: schema.resumeVariant })
+				.from(schema.resumeVariant)
+				.innerJoin(schema.resume, eq(schema.resumeVariant.resumeId, schema.resume.id))
+				.where(
+					and(
+						eq(schema.resumeVariant.resumeId, input.resumeId),
+						eq(schema.resumeVariant.locale, input.locale),
+						eq(schema.resume.userId, input.userId),
+					),
+				);
+			if (!row) throw new ORPCError("NOT_FOUND");
+			return variantResponse(row.variant);
+		},
+
+		create: async (input: {
+			resumeId: string;
+			locale: string;
+			userId: string;
+			data?: ResumeData;
+			initialBlockStatus?: VariantStatus;
+			expectedPrimaryUpdatedAt?: Date;
+		}) => {
+			const result = await db.transaction(async (tx) => {
+				const [resume] = await tx
+					.select({
+						id: schema.resume.id,
+						data: schema.resume.data,
+						isLocked: schema.resume.isLocked,
+						updatedAt: schema.resume.updatedAt,
+					})
+					.from(schema.resume)
+					.where(and(eq(schema.resume.id, input.resumeId), eq(schema.resume.userId, input.userId)))
+					.for("update");
+				if (!resume) throw new ORPCError("NOT_FOUND");
+				if (resume.isLocked) throw new ORPCError("RESUME_LOCKED");
+				if (input.expectedPrimaryUpdatedAt && resume.updatedAt.getTime() !== input.expectedPrimaryUpdatedAt.getTime()) {
+					throw new ORPCError("RESUME_VERSION_CONFLICT", {
+						status: 409,
+						message: "The primary resume changed while its translation was being generated.",
+						data: { updatedAt: resume.updatedAt.toISOString() },
+					});
+				}
+				const primary = parseStoredResumeData(resume.data);
+				if (primary.metadata.page.locale === input.locale) {
+					throw new ORPCError("BAD_REQUEST", { status: 400, message: "A variant must use a different locale." });
+				}
+				const [existingVariant] = await tx
+					.select({ id: schema.resumeVariant.id })
+					.from(schema.resumeVariant)
+					.where(eq(schema.resumeVariant.resumeId, input.resumeId))
+					.limit(1);
+				if (existingVariant) {
+					throw new ORPCError("BAD_REQUEST", {
+						status: 400,
+						message: "This resume already has a language variant.",
+					});
+				}
+
+				const data = parseWritableResumeData(structuredClone(input.data ?? primary));
+				data.metadata.page.locale = input.locale as typeof data.metadata.page.locale;
+				data.metadata.template = primary.metadata.template;
+				data.metadata.layout = structuredClone(primary.metadata.layout);
+				data.metadata.design = structuredClone(primary.metadata.design);
+				data.metadata.typography = structuredClone(primary.metadata.typography);
+				data.metadata.page = {
+					...data.metadata.page,
+					gapX: primary.metadata.page.gapX,
+					gapY: primary.metadata.page.gapY,
+					marginX: primary.metadata.page.marginX,
+					marginY: primary.metadata.page.marginY,
+					format: primary.metadata.page.format,
+					hideLinkUnderline: primary.metadata.page.hideLinkUnderline,
+					hideIcons: primary.metadata.page.hideIcons,
+					hideSectionIcons: primary.metadata.page.hideSectionIcons,
+					locale: input.locale as typeof data.metadata.page.locale,
+				};
+				const [created] = await tx
+					.insert(schema.resumeVariant)
+					.values({
+						resumeId: input.resumeId,
+						locale: input.locale,
+						data,
+						layoutMode: "shared",
+						blockStatuses: {
+							...Object.fromEntries(
+								Object.entries(getResumeBlockFingerprints(primary)).map(([blockId, sourceFingerprint]) => [
+									blockId,
+									{ status: input.initialBlockStatus ?? "missing", sourceFingerprint },
+								]),
+							),
+						} satisfies VariantBlockStatuses,
+					})
+					.returning();
+				if (!created) throw new ORPCError("INTERNAL_SERVER_ERROR");
+				return created;
+			});
+
+			await notifyResumeUpdated({
+				type: "resume.updated",
+				resumeId: input.resumeId,
+				userId: input.userId,
+				updatedAt: result.updatedAt.toISOString(),
+				mutation: "update",
+			});
+			return variantResponse(result);
+		},
+
+		update: async (input: {
+			resumeId: string;
+			locale: string;
+			userId: string;
+			data?: ResumeData;
+			layoutMode?: VariantLayoutMode;
+			blockStatuses?: VariantBlockStatuses;
+			expectedUpdatedAt?: Date;
+		}) => {
+			const result = await db.transaction(async (tx) => {
+				const [row] = await tx
+					.select({ variant: schema.resumeVariant, primary: schema.resume })
+					.from(schema.resumeVariant)
+					.innerJoin(schema.resume, eq(schema.resumeVariant.resumeId, schema.resume.id))
+					.where(
+						and(
+							eq(schema.resumeVariant.resumeId, input.resumeId),
+							eq(schema.resumeVariant.locale, input.locale),
+							eq(schema.resume.userId, input.userId),
+						),
+					)
+					.for("update");
+				if (!row) throw new ORPCError("NOT_FOUND");
+				if (row.primary.isLocked) throw new ORPCError("RESUME_LOCKED");
+				if (input.expectedUpdatedAt && row.variant.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+					throw new ORPCError("RESUME_VERSION_CONFLICT", {
+						status: 409,
+						message: "The language variant changed after this edit was generated.",
+						data: { updatedAt: row.variant.updatedAt.toISOString() },
+					});
+				}
+				// The row is locked by the SELECT ... FOR UPDATE above. Keep the version check in
+				// application code: PostgreSQL timestamps can contain microseconds that JavaScript
+				// Date values (and the JSON transport) cannot round-trip in an equality predicate.
+
+				const layoutMode = input.layoutMode ?? (row.variant.layoutMode as VariantLayoutMode);
+				const primary = parseStoredResumeData(row.primary.data);
+				const data = input.data
+					? parseWritableResumeData(structuredClone(input.data))
+					: parseStoredResumeData(row.variant.data);
+				data.metadata.page.locale = input.locale as typeof data.metadata.page.locale;
+				if (layoutMode === "shared") {
+					data.metadata.template = primary.metadata.template;
+					data.metadata.layout = structuredClone(primary.metadata.layout);
+					data.metadata.design = structuredClone(primary.metadata.design);
+					data.metadata.typography = structuredClone(primary.metadata.typography);
+					data.metadata.page = {
+						...data.metadata.page,
+						gapX: primary.metadata.page.gapX,
+						gapY: primary.metadata.page.gapY,
+						marginX: primary.metadata.page.marginX,
+						marginY: primary.metadata.page.marginY,
+						format: primary.metadata.page.format,
+						hideLinkUnderline: primary.metadata.page.hideLinkUnderline,
+						hideIcons: primary.metadata.page.hideIcons,
+						hideSectionIcons: primary.metadata.page.hideSectionIcons,
+					};
+				}
+
+				const [updated] = await tx
+					.update(schema.resumeVariant)
+					.set({
+						data,
+						layoutMode,
+						...(input.blockStatuses ? { blockStatuses: input.blockStatuses } : {}),
+					})
+					.where(eq(schema.resumeVariant.id, row.variant.id))
+					.returning();
+				if (!updated) throw new ORPCError("NOT_FOUND");
+				return updated;
+			});
+
+			await notifyResumeUpdated({
+				type: "resume.updated",
+				resumeId: input.resumeId,
+				userId: input.userId,
+				updatedAt: result.updatedAt.toISOString(),
+				mutation: "update",
+			});
+			return variantResponse(result);
+		},
+
+		delete: async (input: { resumeId: string; locale: string; userId: string }) => {
+			const [row] = await db
+				.select({
+					variantId: schema.resumeVariant.id,
+					isLocked: schema.resume.isLocked,
+					updatedAt: schema.resume.updatedAt,
+				})
+				.from(schema.resumeVariant)
+				.innerJoin(schema.resume, eq(schema.resumeVariant.resumeId, schema.resume.id))
+				.where(
+					and(
+						eq(schema.resumeVariant.resumeId, input.resumeId),
+						eq(schema.resumeVariant.locale, input.locale),
+						eq(schema.resume.userId, input.userId),
+					),
+				);
+			if (!row) throw new ORPCError("NOT_FOUND");
+			if (row.isLocked) throw new ORPCError("RESUME_LOCKED");
+			await db.delete(schema.resumeVariant).where(eq(schema.resumeVariant.id, row.variantId));
+			await notifyResumeUpdated({
+				type: "resume.updated",
+				resumeId: input.resumeId,
+				userId: input.userId,
+				updatedAt: row.updatedAt.toISOString(),
+				mutation: "update",
+			});
+		},
+	},
 
 	versions: {
 		list: async (input: { resumeId: string; userId: string }) => {
@@ -685,6 +1008,24 @@ export const resumeService = {
 						: preserveServerStylesheet(existing.data, inputData)
 					: undefined;
 				const normalizedData = data ? parseWritableResumeData(data) : undefined;
+				if (normalizedData && normalizedData.metadata.page.locale !== existing.data.metadata.page.locale) {
+					const [localeCollision] = await tx
+						.select({ id: schema.resumeVariant.id })
+						.from(schema.resumeVariant)
+						.where(
+							and(
+								eq(schema.resumeVariant.resumeId, input.id),
+								eq(schema.resumeVariant.locale, normalizedData.metadata.page.locale),
+							),
+						)
+						.limit(1);
+					if (localeCollision) {
+						throw new ORPCError("BAD_REQUEST", {
+							status: 400,
+							message: "The primary resume locale is already used by a language variant.",
+						});
+					}
+				}
 				const dataForRenderComparison =
 					normalizedData && input.restoreStylesheet
 						? preserveServerStylesheet(existing.data, normalizedData)
@@ -727,6 +1068,13 @@ export const resumeService = {
 					});
 
 				if (!updated) throw new ORPCError("NOT_FOUND");
+				if (normalizedData) {
+					await reconcileVariantReviewState(tx, {
+						resumeId: input.id,
+						previous: existing.data,
+						next: normalizedData,
+					});
+				}
 				return updated;
 			})
 			.catch((error: unknown) => {

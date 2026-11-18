@@ -18,8 +18,10 @@ import { useAppForm } from "@/libs/tanstack-form";
 import { SectionBase } from "../shared/section-base";
 
 export function PageSectionBuilder() {
+	const resume = useResume();
+	const sharedLayout = resume?.variantLocale && resume.variantLayoutMode === "shared";
 	return (
-		<SectionBase type="page">
+		<SectionBase type="page" className={sharedLayout ? "pointer-events-none opacity-60" : undefined}>
 			<PageSectionForm />
 		</SectionBase>
 	);
@@ -99,6 +101,7 @@ function PageSectionForm() {
 								<Combobox
 									options={getLocaleOptions()}
 									value={field.state.value}
+									disabled={Boolean(resume?.variantLocale)}
 									onValueChange={(locale) => {
 										const value = (locale ?? "") as string;
 										field.handleChange(value);

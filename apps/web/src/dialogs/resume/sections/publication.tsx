@@ -86,6 +86,12 @@ export function UpdatePublicationDialog({ data }: DialogProps<"resume.sections.p
 			onCancel={requestClose}
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
+			translationAssist={{
+				sectionType: "publications",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<PublicationForm form={form} />
 		</SectionItemDialog>

@@ -91,6 +91,12 @@ export function UpdateSummaryItemDialog({ data }: DialogProps<"resume.sections.s
 			isSubmitting={isSubmitting}
 			submitLabel={<Trans>Save Changes</Trans>}
 			singleColumn
+			translationAssist={{
+				sectionType: "summary",
+				blockId: data.item.id,
+				customSectionId: data.customSectionId,
+				onApply: (block) => form.reset(block as FormValues),
+			}}
 		>
 			<SummaryItemForm form={form} />
 		</SectionItemDialog>

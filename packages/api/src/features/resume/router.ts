@@ -5,6 +5,7 @@ import { sharingRouter } from "./sharing";
 import { resumeStatisticsRouter } from "./statistics";
 import { stylesheetRouter } from "./stylesheet";
 import { tagsRouter } from "./tags";
+import { variantsRouter } from "./variants";
 import { versionsRouter } from "./versions";
 
 export const resumeRouter = {
@@ -28,6 +29,7 @@ export const resumeRouter = {
 	removePassword: sharingRouter.removePassword,
 	duplicate: crudRouter.duplicate,
 	delete: crudRouter.delete,
+	variants: variantsRouter,
 	listVersions: versionsRouter.listVersions,
 	restoreVersion: versionsRouter.restoreVersion,
 };

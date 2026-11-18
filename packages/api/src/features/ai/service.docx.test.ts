@@ -107,4 +107,43 @@ describe("AI DOCX parsing", () => {
 		expect(messages).toContain("converted to plain text");
 		expect(messages).not.toContain('"type":"file"');
 	});
+
+	it("sends a complete translation prompt with the target locale", async () => {
+		generateTextMock.mockResolvedValue({ text: JSON.stringify(defaultResumeData) });
+
+		await aiService.translateResume({
+			provider: "openai-compatible",
+			model: "test-model",
+			apiKey: "test-key",
+			baseURL: "https://example.test/v1",
+			resumeData: defaultResumeData,
+			targetLocale: "fr-FR",
+		});
+
+		const request = generateTextMock.mock.calls[0]?.[0] as { system?: string; messages: unknown[] };
+		expect(request.system).toContain("fr-FR");
+		expect(request.system).toContain("similar text length");
+		expect(JSON.stringify(request.messages)).toContain("complete JSON object only");
+	});
+
+	it("sends the source block, target block, and user instruction for block translation", async () => {
+		generateTextMock.mockResolvedValue({ text: JSON.stringify({ id: "experience-1", position: "Ingénieur" }) });
+
+		await aiService.translateResumeBlock({
+			provider: "openai-compatible",
+			model: "test-model",
+			apiKey: "test-key",
+			baseURL: "https://example.test/v1",
+			sourceBlock: { id: "experience-1", position: "Engineer" },
+			targetBlock: { id: "experience-1", position: "Ingénieur" },
+			sectionType: "experience",
+			targetLocale: "fr-FR",
+			instruction: "Keep it concise",
+		});
+
+		const request = generateTextMock.mock.calls[0]?.[0] as { system?: string };
+		expect(request.system).toContain("Keep it concise");
+		expect(request.system).toContain('"position": "Engineer"');
+		expect(request.system).toContain('"position": "Ingénieur"');
+	});
 });

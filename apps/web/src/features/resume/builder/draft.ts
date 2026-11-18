@@ -1,4 +1,5 @@
 import type { ResumeData } from "@reactive-resume/schema/resume/data";
+import type { VariantBlockStatuses, VariantTextLengthDrift } from "@reactive-resume/schema/resume/variants";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import type { WritableDraft } from "immer";
 import { t } from "@lingui/core/macro";
@@ -10,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { immer } from "zustand/middleware/immer";
 import { create } from "zustand/react";
+import { getResumeTextLengthDrift } from "@reactive-resume/schema/resume/variants";
 import { refreshStylesheetStore } from "@/features/resume/stylesheet/store";
 import { orpc, streamClient } from "@/libs/orpc/client";
 
@@ -23,6 +25,12 @@ export type Resume = {
 	updatedAt: Date;
 	hasPassword?: boolean;
 	isPublic?: boolean;
+	/** Present only while editing a secondary language variant. */
+	variantLocale?: string;
+	variantId?: string;
+	variantLayoutMode?: "shared" | "custom";
+	variantBlockStatuses?: VariantBlockStatuses;
+	variantTextLengthDrift?: VariantTextLengthDrift;
 };
 
 // Mirrors the server-side ResumeUpdatedEvent discriminator (packages/api resume/events.ts).
@@ -64,11 +72,14 @@ type Runtime = {
 	hasPendingLocalChanges: boolean;
 	isSaving: boolean;
 	pendingResume?: Resume;
+	inFlightResume?: Resume;
+	latestResume?: Resume;
 	syncErrorToastId?: string | number;
 	syncResume: ReturnType<typeof debounce<(resume: Resume) => void>>;
 	beforeUnloadHandler?: () => void;
 	deferredRemoteResume?: Resume;
 	deferredFocusHandler?: () => void;
+	disposeWhenIdle?: boolean;
 };
 
 type ResumeUpdateSubscriptionOptions = {
@@ -95,8 +106,15 @@ function resetHistoryRuntime() {
 
 let lockedToastId: string | number | undefined;
 
+const MISSING_RESUME = Symbol("missing-resume");
+type MissingResume = typeof MISSING_RESUME;
+
 function getResumeQueryKey(id: string): QueryKey {
 	return orpc.resume.getById.queryOptions({ input: { id } }).queryKey as QueryKey;
+}
+
+function getResumeRuntimeKey(resume: Pick<Resume, "id" | "variantLocale">): string {
+	return `${resume.id}:${resume.variantLocale ?? "primary"}`;
 }
 
 function cloneResumeData(data: ResumeData): ResumeData {
@@ -132,7 +150,8 @@ function notifyExternalUpdate(mutation: ResumeUpdateMutation) {
 
 // #54: applies a remote update that was deferred because the user was typing.
 function applyDeferredRemoteResume(id: string) {
-	const runtime = runtimes.get(id);
+	const current = useResumeStore.getState().resume;
+	const runtime = current?.id === id ? runtimes.get(getResumeRuntimeKey(current)) : runtimes.get(id);
 	if (!runtime?.deferredRemoteResume) return;
 
 	const resume = runtime.deferredRemoteResume;
@@ -151,7 +170,7 @@ function applyDeferredRemoteResume(id: string) {
 
 // #54: don't overwrite a focused field mid-keystroke; stash the remote resume and apply it on blur.
 function deferRemoteResumeUntilBlur(id: string, resume: Resume) {
-	const runtime = getRuntime(id);
+	const runtime = getRuntime(getResumeRuntimeKey(resume));
 	runtime.deferredRemoteResume = resume;
 
 	if (runtime.deferredFocusHandler || typeof document === "undefined") return;
@@ -169,49 +188,126 @@ function deferRemoteResumeUntilBlur(id: string, resume: Resume) {
 }
 
 function setRuntimeBaseline(resume: Resume) {
-	const runtime = getRuntime(resume.id);
+	const runtime = getRuntime(getResumeRuntimeKey(resume));
+	if (runtime.pendingResume || runtime.inFlightResume || runtime.hasPendingLocalChanges) {
+		runtime.hasPendingLocalChanges = true;
+		return;
+	}
 	runtime.hasPendingLocalChanges = false;
 	runtime.pendingResume = undefined;
+	runtime.latestResume = undefined;
 }
 
-async function flushResumeSave(id: string) {
-	const runtime = runtimes.get(id);
+async function flushResumeSave(id: string, requestedRuntimeKey?: string) {
+	const current = useResumeStore.getState().resume;
+	const runtimeKey = requestedRuntimeKey ?? (current?.id === id ? getResumeRuntimeKey(current) : id);
+	const runtime = runtimes.get(runtimeKey);
 	if (!runtime || runtime.isSaving || !runtime.pendingResume) return;
 
 	const submitted = runtime.pendingResume;
 	const submittedData = cloneResumeData(submitted.data);
 	runtime.pendingResume = undefined;
+	runtime.inFlightResume = submitted;
 	runtime.isSaving = true;
 
 	try {
-		const updated = (await orpc.resume.update.call(
-			{ id: submitted.id, data: submittedData },
-			{ signal: runtime.abortController.signal },
-		)) as Resume;
+		let updated: Resume;
+		if (submitted.variantLocale) {
+			const saved = (await orpc.resume.variants.update.call(
+				{
+					resumeId: submitted.id,
+					locale: submitted.variantLocale as never,
+					data: submittedData,
+					expectedUpdatedAt: submitted.updatedAt,
+				},
+				{ signal: runtime.abortController.signal },
+			)) as {
+				id: string;
+				resumeId: string;
+				locale: string;
+				data: ResumeData;
+				layoutMode: "shared" | "custom";
+				blockStatuses: Record<string, unknown>;
+				createdAt: Date;
+				updatedAt: Date;
+			};
+			updated = { ...submitted, data: saved.data, updatedAt: saved.updatedAt };
+			runtime.queryClient?.setQueryData(
+				orpc.resume.variants.get.queryOptions({
+					input: { resumeId: submitted.id, locale: submitted.variantLocale as never },
+				}).queryKey,
+				saved as never,
+			);
+			runtime.queryClient?.setQueryData(
+				orpc.resume.variants.list.queryOptions({ input: { resumeId: submitted.id } }).queryKey,
+				((currentVariants: Array<typeof saved> | undefined) =>
+					currentVariants?.map((variant) => (variant.locale === saved.locale ? saved : variant))) as never,
+			);
+		} else {
+			updated = (await orpc.resume.update.call(
+				{ id: submitted.id, data: submittedData },
+				{ signal: runtime.abortController.signal },
+			)) as Resume;
+		}
 
-		runtime.queryClient?.setQueryData(getResumeQueryKey(submitted.id), updated);
+		if (!submitted.variantLocale) {
+			runtime.queryClient?.setQueryData(getResumeQueryKey(submitted.id), updated);
+			void runtime.queryClient?.invalidateQueries({
+				queryKey: orpc.resume.variants.list.queryOptions({ input: { resumeId: submitted.id } }).queryKey,
+			});
+			void runtime.queryClient?.invalidateQueries({ queryKey: ["resume", "variant", submitted.id] });
+		}
+
+		// A newer edit can already be queued while this request is in flight. Rebase every queued
+		// snapshot onto the successful server timestamp so its optimistic-concurrency check does not
+		// immediately fail on the retry.
+		if (submitted.variantLocale) {
+			const pendingResume = runtime.pendingResume as Resume | undefined;
+			const latestResume = runtime.latestResume as Resume | undefined;
+			if (pendingResume && pendingResume.variantLocale === submitted.variantLocale) {
+				runtime.pendingResume = { ...pendingResume, updatedAt: updated.updatedAt };
+			}
+			if (latestResume && latestResume.variantLocale === submitted.variantLocale) {
+				runtime.latestResume = { ...latestResume, updatedAt: updated.updatedAt };
+			}
+		}
 
 		const currentResume = useResumeStore.getState().resume;
+		const currentResumeIsSubmissionVariant =
+			currentResume?.id === submitted.id && getResumeRuntimeKey(currentResume) === runtimeKey;
 		const currentDataStillMatchesSubmission =
-			currentResume?.id === submitted.id && isEqual(currentResume.data, submittedData);
+			currentResumeIsSubmissionVariant && isEqual(currentResume.data, submittedData);
 
 		if (currentDataStillMatchesSubmission && !runtime.pendingResume) {
 			runtime.hasPendingLocalChanges = false;
+			if (runtime.latestResume && isEqual(runtime.latestResume.data, submittedData)) runtime.latestResume = undefined;
 			// The local data still equals what we just saved, so the client already holds the canonical
 			// data — only server-owned metadata (updatedAt, etc.) can differ. Merge just that instead of
 			// replacing the whole resume: a full replace swaps every nested reference (the server strips
 			// `undefined`s, so an equality check on its echo can't even confirm they match), which fires
 			// every `data` selector and remounts the entire builder tree on each save-after-typing.
-			useResumeStore.getState().mergeResumeMetadata(updated);
+			if (!isEqual(updated.data, submittedData)) useResumeStore.getState().replaceResumeFromServer(updated);
+			else useResumeStore.getState().mergeResumeMetadata(updated);
 			useResumeStore.getState().setSaveStatus("saved");
-		} else {
+		} else if (currentResumeIsSubmissionVariant) {
 			runtime.hasPendingLocalChanges = true;
 			useResumeStore.getState().mergeResumeMetadata(updated);
 
-			if (!runtime.pendingResume && currentResume?.id === submitted.id && !isEqual(currentResume.data, submittedData)) {
+			const latestResume = runtime.latestResume ?? currentResume;
+			if (
+				!runtime.pendingResume &&
+				latestResume?.id === submitted.id &&
+				getResumeRuntimeKey(latestResume) === runtimeKey &&
+				!isEqual(latestResume.data, submittedData)
+			) {
 				runtime.syncResume.cancel();
-				runtime.pendingResume = cloneResume(currentResume);
+				runtime.pendingResume = cloneResume({ ...latestResume, updatedAt: updated.updatedAt });
 			}
+		} else {
+			// A language switch may have happened while this variant save was in flight. Keep its
+			// runtime alive and let the next visit fetch the canonical variant; never merge its metadata
+			// into the primary-language draft.
+			runtime.hasPendingLocalChanges = false;
 		}
 
 		if (runtime.syncErrorToastId !== undefined) {
@@ -230,15 +326,17 @@ async function flushResumeSave(id: string) {
 		});
 	} finally {
 		runtime.isSaving = false;
-		if (runtime.pendingResume && runtime.syncErrorToastId === undefined) void flushResumeSave(id);
+		if (runtime.inFlightResume === submitted) runtime.inFlightResume = undefined;
+		if (runtime.pendingResume && runtime.syncErrorToastId === undefined) void flushResumeSave(id, runtimeKey);
+		if (!runtime.pendingResume && runtime.disposeWhenIdle) disposeRuntime(runtimeKey);
 	}
 }
 
 function queueResumeSave(resume: Resume) {
-	const runtime = getRuntime(resume.id);
+	const runtime = getRuntime(getResumeRuntimeKey(resume));
 	runtime.pendingResume = cloneResume(resume);
 	runtime.hasPendingLocalChanges = true;
-	void flushResumeSave(resume.id);
+	void flushResumeSave(resume.id, getResumeRuntimeKey(resume));
 }
 
 function createRuntime(): Runtime {
@@ -246,7 +344,7 @@ function createRuntime(): Runtime {
 
 	const syncResume = debounce(
 		(resume: Resume) => {
-			queueResumeSave(resume);
+			queueResumeSave(runtime.latestResume ?? resume);
 		},
 		SAVE_DEBOUNCE_MS,
 		{ signal: abortController.signal },
@@ -277,18 +375,18 @@ function getRuntime(id: string): Runtime {
 }
 
 function bindRuntimeQueryClient(id: string, queryClient: QueryClient) {
-	getRuntime(id).queryClient = queryClient;
+	const current = useResumeStore.getState().resume;
+	getRuntime(current?.id === id ? getResumeRuntimeKey(current) : `${id}:primary`).queryClient = queryClient;
 }
 
-function hasPendingLocalChanges(id: string): boolean {
-	return getRuntime(id).hasPendingLocalChanges;
+function hasPendingLocalChanges(id: string, variantLocale?: string): boolean {
+	return getRuntime(`${id}:${variantLocale ?? "primary"}`).hasPendingLocalChanges;
 }
 
-function cleanupRuntime(id: string) {
+function disposeRuntime(id: string) {
 	const runtime = runtimes.get(id);
 	if (!runtime) return;
 
-	runtime.syncResume.flush();
 	runtime.abortController.abort();
 
 	if (runtime.beforeUnloadHandler && typeof window !== "undefined") {
@@ -302,11 +400,35 @@ function cleanupRuntime(id: string) {
 	runtimes.delete(id);
 }
 
+function cleanupRuntime(id: string) {
+	const runtime = runtimes.get(id);
+	if (!runtime) return;
+
+	// Flush the debounce, but keep this locale runtime alive until its request resolves. This prevents
+	// a fast language switch or route change from aborting a valid autosave.
+	runtime.syncResume.flush();
+	if (runtime.isSaving || runtime.pendingResume) {
+		runtime.disposeWhenIdle = true;
+		return;
+	}
+	disposeRuntime(id);
+}
+
+function cleanupResumeRuntimes(resumeId: string) {
+	for (const key of runtimes.keys()) {
+		if (key === resumeId || key.startsWith(`${resumeId}:`)) cleanupRuntime(key);
+	}
+}
+
 function syncCurrentResume(id: string) {
 	const resume = useResumeStore.getState().resume;
 	if (!resume || resume.id !== id) return;
 
-	getRuntime(id).syncResume(resume);
+	const runtime = getRuntime(getResumeRuntimeKey(resume));
+	// Keep the latest draft outside the debounce closure. A locale switch can unmount/re-mount the
+	// builder before the timer fires; returning to the original locale must still save its latest data.
+	runtime.latestResume = cloneResume(resume);
+	runtime.syncResume(resume);
 }
 
 export const useResumeStore = create<ResumeStore>()(
@@ -321,13 +443,20 @@ export const useResumeStore = create<ResumeStore>()(
 		canRedo: false,
 
 		initialize: (resume) => {
-			if (resume) setRuntimeBaseline(resume);
+			const runtime = resume ? getRuntime(getResumeRuntimeKey(resume)) : undefined;
+			const runtimeDraft = runtime
+				? (runtime.pendingResume ??
+					(runtime.hasPendingLocalChanges ? runtime.latestResume : undefined) ??
+					runtime.inFlightResume)
+				: undefined;
+			const nextResume = runtimeDraft ?? resume;
+			if (nextResume) setRuntimeBaseline(nextResume);
 			resetHistoryRuntime();
 
 			set((state) => {
-				state.resume = resume;
-				state.resumeId = resume?.id;
-				state.isReady = resume !== null;
+				state.resume = nextResume;
+				state.resumeId = nextResume?.id;
+				state.isReady = nextResume !== null;
 				state.undoStack = [];
 				state.redoStack = [];
 				state.canUndo = false;
@@ -448,7 +577,7 @@ export const useResumeStore = create<ResumeStore>()(
 				state.canRedo = state.redoStack.length > 0;
 			});
 
-			getRuntime(currentResume.id).hasPendingLocalChanges = true;
+			getRuntime(getResumeRuntimeKey(currentResume)).hasPendingLocalChanges = true;
 			syncCurrentResume(currentResume.id);
 		},
 
@@ -502,7 +631,7 @@ function applyHistoryStep(get: StoreGet, set: ImmerSet, direction: "undo" | "red
 		draft.canRedo = draft.redoStack.length > 0;
 	});
 
-	getRuntime(currentResume.id).hasPendingLocalChanges = true;
+	getRuntime(getResumeRuntimeKey(currentResume)).hasPendingLocalChanges = true;
 	syncCurrentResume(currentResume.id);
 }
 
@@ -523,24 +652,25 @@ export function usePatchResume() {
 	return useResumeStore((state) => state.patchResume);
 }
 
-function useBuilderResumeSelector<T>(selector: (resume: Resume) => T): T | undefined {
+function useBuilderResumeSelector<T>(selector: (resume: Resume) => T): T | MissingResume {
 	const params = useParams({ strict: false }) as { resumeId?: string };
 	const resumeId = params.resumeId;
 
 	return useResumeStore((state) => {
-		if (!resumeId || !state.resume || state.resume.id !== resumeId) return undefined;
+		if (!resumeId || !state.resume || state.resume.id !== resumeId) return MISSING_RESUME;
 		return selector(state.resume);
 	});
 }
 
 export function useCurrentBuilderResumeSelector<T>(selector: (resume: Resume) => T): T {
 	const selected = useBuilderResumeSelector(selector);
-	if (selected === undefined) throw new Error("Resume data is required before rendering this component.");
+	if (selected === MISSING_RESUME) throw new Error("Resume data is required before rendering this component.");
 	return selected;
 }
 
 export function useResume(): Resume | undefined {
-	return useBuilderResumeSelector((resume) => resume);
+	const resume = useBuilderResumeSelector((current) => current);
+	return resume === MISSING_RESUME ? undefined : resume;
 }
 
 export function useCurrentResume(): Resume {
@@ -550,11 +680,13 @@ export function useCurrentResume(): Resume {
 }
 
 export function useResumeData(): ResumeData | undefined {
-	return useBuilderResumeSelector((resume) => resume.data);
+	const data = useBuilderResumeSelector((resume) => resume.data);
+	return data === MISSING_RESUME ? undefined : data;
 }
 
 export function useIsResumeLocked(): boolean {
-	return useBuilderResumeSelector((resume) => resume.isLocked) ?? false;
+	const isLocked = useBuilderResumeSelector((resume) => resume.isLocked);
+	return isLocked === MISSING_RESUME ? false : isLocked;
 }
 
 export function useUpdateResumeData() {
@@ -620,17 +752,42 @@ export function useBuilderResumeUpdateSubscription() {
 				await refreshStylesheetStore(resumeId);
 				return;
 			}
-			const resume = (await orpc.resume.getById.call({ id: resumeId })) as Resume;
+			const current = useResumeStore.getState().resume;
+			let resume: Resume;
+			if (current?.variantLocale) {
+				const [variant, primary] = await Promise.all([
+					orpc.resume.variants.get.call({
+						resumeId,
+						locale: current.variantLocale as never,
+					}),
+					orpc.resume.getById.call({ id: resumeId }) as Promise<Resume>,
+				]);
+				queryClient.setQueryData(
+					orpc.resume.variants.get.queryOptions({
+						input: { resumeId, locale: current.variantLocale as never },
+					}).queryKey,
+					variant,
+				);
+				queryClient.setQueryData(getResumeQueryKey(resumeId), primary);
+				resume = {
+					...current,
+					data: variant.data,
+					updatedAt: variant.updatedAt,
+					variantBlockStatuses: variant.blockStatuses,
+					variantTextLengthDrift: getResumeTextLengthDrift(primary.data, variant.data),
+				} as Resume;
+			} else {
+				resume = (await orpc.resume.getById.call({ id: resumeId })) as Resume;
+			}
 
-			queryClient.setQueryData(getResumeQueryKey(resumeId), resume);
+			if (!resume.variantLocale) queryClient.setQueryData(getResumeQueryKey(resumeId), resume);
 			await refreshStylesheetStore(resumeId, resume.data);
 
-			if (hasPendingLocalChanges(resumeId)) {
+			if (hasPendingLocalChanges(resumeId, resume.variantLocale)) {
 				useResumeStore.getState().mergeResumeMetadata(resume);
 				return;
 			}
 
-			const current = useResumeStore.getState().resume;
 			const isExternalChange =
 				event.mutation !== "sync" && current?.id === resume.id && !isEqual(current.data, resume.data);
 
@@ -669,7 +826,7 @@ export function useResumeCleanup() {
 		if (!resumeId) return;
 
 		return () => {
-			cleanupRuntime(resumeId);
+			cleanupResumeRuntimes(resumeId);
 			reset();
 		};
 	}, [resumeId, reset]);
